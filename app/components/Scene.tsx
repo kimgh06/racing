@@ -159,11 +159,12 @@ export function Scene() {
         }}
       >
         <h3 style={{ margin: "0 0 10px 0", color: "#4ecdc4" }}>조작법</h3>
-        <div>WASD 또는 화살표 키: 이동</div>
-        <div>스페이스바: 점프</div>
+        <div>W/S: 전진/후진 (바닥에서만)</div>
+        <div>A/D: 좌회전/우회전 (바퀴처럼)</div>
+        <div>스페이스바: 점프 (바닥에 있을 때만)</div>
         <div>마우스: 카메라 회전 (OrbitControls)</div>
         <div style={{ marginTop: "10px", fontSize: "12px", color: "#ccc" }}>
-          빨간색: 점프 중 | 청록색: 착지 상태
+          빨간색: 점프 중 | 청록색: 착지 상태 | 바퀴처럼 회전하며 이동
         </div>
       </div>
     </div>

@@ -11,6 +11,11 @@ interface PlayerProps {
   friction?: number;
 }
 
+interface PlayerState {
+  rotation: number; // 회전 각도 (라디안)
+  angularVelocity: number; // 각속도
+}
+
 export function Player({
   position = [0, 5, 0],
   mass = 1,
@@ -19,6 +24,12 @@ export function Player({
 }: PlayerProps) {
   const meshRef = useRef<THREE.Mesh>(null);
   const [isJumping, setIsJumping] = useState(false);
+
+  // 플레이어 회전 상태 (useRef로 직접 관리)
+  const rotationRef = useRef<PlayerState>({
+    rotation: 0,
+    angularVelocity: 0,
+  });
 
   const gravityEngine = useGravityEngineContext();
 
@@ -76,38 +87,108 @@ export function Player({
     };
   }, []);
 
-  // 움직임 처리 (useFrame에서)
-  useFrame(() => {
+  // 통합된 물리 및 움직임 처리
+  useFrame((state, delta) => {
     const player = gravityEngine.getObject("player");
     if (!player) return;
 
     const moveSpeed = 5; // 이동 속도
+    const turnSpeed = 2; // 회전 속도 (더 느리게)
     const jumpForce = 10; // 점프력
 
-    // 키보드 입력에 따른 움직임 - 직접 속도 설정
-    if (keys.has("KeyW") || keys.has("ArrowUp")) {
-      player.velocity.z = -moveSpeed;
+    // 회전 상태를 직접 계산 (useRef 사용)
+    let newAngularVelocity = rotationRef.current.angularVelocity;
+    let newRotation = rotationRef.current.rotation;
+
+    // 회전 입력 처리 (A/D 키) - 바닥에 있을 때만
+    if (player.onGround) {
+      if (keys.has("KeyA") || keys.has("ArrowLeft")) {
+        newAngularVelocity = turnSpeed;
+      } else if (keys.has("KeyD") || keys.has("ArrowRight")) {
+        newAngularVelocity = -turnSpeed;
+      } else {
+        // 회전 입력이 없으면 각속도를 빠르게 감소
+        newAngularVelocity = newAngularVelocity * 0.3;
+      }
+    } else {
+      // 공중에서는 회전도 천천히 감속
+      if (keys.has("KeyA") || keys.has("ArrowLeft")) {
+        newAngularVelocity = turnSpeed * 0.5; // 공중에서는 회전력 감소
+      } else if (keys.has("KeyD") || keys.has("ArrowRight")) {
+        newAngularVelocity = -turnSpeed * 0.5; // 공중에서는 회전력 감소
+      } else {
+        // 공중에서 회전 입력이 없으면 매우 천천히 감속
+        newAngularVelocity = newAngularVelocity * 0.9;
+      }
     }
-    if (keys.has("KeyS") || keys.has("ArrowDown")) {
-      player.velocity.z = moveSpeed;
+
+    // 각속도가 매우 작을 때 완전히 멈춤
+    if (Math.abs(newAngularVelocity) < 0.01) {
+      newAngularVelocity = 0;
     }
-    if (keys.has("KeyA") || keys.has("ArrowLeft")) {
-      player.velocity.x = -moveSpeed;
+
+    // 회전 업데이트
+    newRotation = newRotation + newAngularVelocity * delta;
+
+    // useRef에 즉시 반영
+    rotationRef.current = {
+      rotation: newRotation,
+      angularVelocity: newAngularVelocity,
+    };
+
+    // 회전 정보를 전역으로 공유
+    (window as any).playerRotation = newRotation;
+
+    // 전진/후진 입력 처리 (W/S 키) - 바닥에 있을 때만
+    if (player.onGround) {
+      if (keys.has("KeyW") || keys.has("ArrowUp")) {
+        // 현재 회전 방향으로 전진
+        const forwardX = -Math.sin(newRotation);
+        const forwardZ = -Math.cos(newRotation);
+        player.velocity.x = forwardX * moveSpeed;
+        player.velocity.z = forwardZ * moveSpeed;
+
+        // 디버깅 로그
+        console.log(
+          `W키 - 회전: ${((newRotation * 180) / Math.PI).toFixed(
+            1
+          )}°, 전진: (${forwardX.toFixed(2)}, ${forwardZ.toFixed(2)})`
+        );
+      } else if (keys.has("KeyS") || keys.has("ArrowDown")) {
+        // 현재 회전 방향의 반대로 후진
+        const backwardX = Math.sin(newRotation);
+        const backwardZ = Math.cos(newRotation);
+        player.velocity.x = backwardX * moveSpeed;
+        player.velocity.z = backwardZ * moveSpeed;
+
+        // 디버깅 로그
+        console.log(
+          `S키 - 회전: ${((newRotation * 180) / Math.PI).toFixed(
+            1
+          )}°, 후진: (${backwardX.toFixed(2)}, ${backwardZ.toFixed(2)})`
+        );
+      } else {
+        // 전진/후진 입력이 없으면 수평 속도를 점진적으로 감소
+        player.velocity.x *= 0.8;
+        player.velocity.z *= 0.8;
+      }
+    } else {
+      // 공중에서는 수평 속도를 천천히 감속
+      player.velocity.x *= 0.999; // 매우 천천히 감속
+      player.velocity.z *= 0.999; // 매우 천천히 감속
     }
-    if (keys.has("KeyD") || keys.has("ArrowRight")) {
-      player.velocity.x = moveSpeed;
-    }
+    // 수직 속도는 중력에 의해 자동 처리
+
+    // 점프 (바닥에 있을 때만)
     if (keys.has("Space") && player.onGround && !isJumping) {
       player.velocity.y = jumpForce;
       setIsJumping(true);
     }
-  });
 
-  // 물리 업데이트
-  useFrame(() => {
-    const player = gravityEngine.getObject("player");
-    if (player && meshRef.current) {
+    // 메시 위치 및 회전 업데이트 (즉시 반영)
+    if (meshRef.current) {
       meshRef.current.position.copy(player.position);
+      meshRef.current.rotation.y = newRotation; // 계산된 회전을 즉시 적용
     }
   });
 

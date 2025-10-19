@@ -1,6 +1,7 @@
 import { useFrame, useThree } from "@react-three/fiber";
 import { useGravityEngineContext } from "./Scene";
 import * as THREE from "three";
+import { useState, useEffect } from "react";
 
 interface ThirdPersonCameraProps {
   targetId: string;
@@ -18,7 +19,11 @@ export function ThirdPersonCamera({
   const { camera } = useThree();
   const gravityEngine = useGravityEngineContext();
 
-  useFrame(() => {
+  // 카메라 회전 상태
+  const [cameraRotation, setCameraRotation] = useState(0);
+  const [targetRotation, setTargetRotation] = useState(0);
+
+  useFrame((state, delta) => {
     const target = gravityEngine.getObject(targetId);
     if (!target) return;
 
@@ -26,10 +31,25 @@ export function ThirdPersonCamera({
     const targetPosition = target.position.clone();
     targetPosition.y += height; // 카메라 높이 조정
 
-    // 카메라가 있어야 할 위치 계산
+    // 플레이어의 회전 정보를 가져오기
+    if (targetId === "player") {
+      const playerRotation = (window as any).playerRotation || 0;
+      setTargetRotation(playerRotation);
+    }
+
+    // 카메라 회전을 타겟 회전에 맞춰 부드럽게 업데이트
+    setCameraRotation((prev) => {
+      const diff = targetRotation - prev;
+      return prev + diff * smoothness * 5;
+    });
+
+    // 카메라 위치 계산 (타겟 뒤쪽, 회전 고려)
     const cameraPosition = new THREE.Vector3();
     cameraPosition.copy(targetPosition);
-    cameraPosition.z += distance; // 뒤쪽으로 거리만큼 이동
+
+    // 회전을 고려한 카메라 위치
+    cameraPosition.x += Math.sin(cameraRotation) * distance;
+    cameraPosition.z += Math.cos(cameraRotation) * distance;
 
     // 부드러운 카메라 이동
     camera.position.lerp(cameraPosition, smoothness);
