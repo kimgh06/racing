@@ -7,9 +7,13 @@
     "build": "remix build",
     "dev": "remix dev",
     "start": "remix-serve build",
-    "typecheck": "tsc"
+    "typecheck": "tsc",
+    "test:e2e": "playwright test",
+    "test:e2e:headed": "playwright test --headed",
+    "test:e2e:ui": "playwright test --ui"
   },
   "dependencies": {
+    "@dimforge/rapier3d-compat": "^0.19.2",
     "@react-three/drei": "^9.88.13",
     "@react-three/fiber": "^8.15.12",
     "@remix-run/node": "^2.8.1",
@@ -21,6 +25,7 @@
     "three": "^0.158.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.48.2",
     "@remix-run/dev": "^2.8.1",
     "@types/react": "^18.2.45",
     "@types/react-dom": "^18.2.18",

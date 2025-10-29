@@ -1,172 +1,124 @@
-import { Suspense, createContext, useContext, useEffect, useRef } from "react";
-import { Canvas, useFrame } from "@react-three/fiber";
-import { OrbitControls, Environment, Stats } from "@react-three/drei";
+import { Suspense, createContext, useContext } from "react";
+import { Canvas } from "@react-three/fiber";
+import { OrbitControls, Environment } from "@react-three/drei";
+import { usePhysicsEngine } from "~/physicsEngine";
 import { Player } from "./Player";
-import { Ground, GridGround } from "./Ground";
+import { CakeGround } from "./CakeGround";
 import { ThirdPersonCamera } from "./ThirdPersonCamera";
-import { useGravityEngine, GravityObject } from "~/gravityEngine";
-import * as THREE from "three";
 
-// 중력 엔진 컨텍스트 생성
-const GravityEngineContext = createContext<ReturnType<
-  typeof useGravityEngine
+// 물리 엔진 컨텍스트 생성
+const PhysicsEngineContext = createContext<ReturnType<
+  typeof usePhysicsEngine
 > | null>(null);
 
-// 중력 엔진 프로바이더 컴포넌트
-function GravityEngineProvider({ children }: { children: React.ReactNode }) {
-  const gravityEngine = useGravityEngine({
-    gravity: 9.8,
-    groundY: 0,
-    airResistance: 0.01,
-    bounceThreshold: 0.01, // 매우 민감한 반발 임계값
-    frictionMultiplier: 2, // 마찰 배수 증가
+// 물리 엔진 프로바이더 컴포넌트
+function PhysicsEngineProvider({ children }: { children: React.ReactNode }) {
+  const physicsEngine = usePhysicsEngine({
+    gravity: 12,
+    mapBounds: {
+      minX: -100,
+      maxX: 100,
+      minZ: -100,
+      maxZ: 100,
+      fallHeight: -50,
+    },
   });
 
   return (
-    <GravityEngineContext.Provider value={gravityEngine}>
+    <PhysicsEngineContext.Provider value={physicsEngine}>
       {children}
-    </GravityEngineContext.Provider>
+    </PhysicsEngineContext.Provider>
   );
 }
 
-// 중력 엔진 훅
-export function useGravityEngineContext() {
-  const context = useContext(GravityEngineContext);
+// 물리 엔진 훅
+export function usePhysicsEngineContext() {
+  const context = useContext(PhysicsEngineContext);
   if (!context) {
     throw new Error(
-      "useGravityEngineContext must be used within GravityEngineProvider"
+      "usePhysicsEngineContext must be used within a PhysicsEngineProvider"
     );
   }
   return context;
 }
 
-// 테스트용 장애물 컴포넌트
-function TestObstacle({
-  position,
-  size,
-  color,
-}: {
-  position: [number, number, number];
-  size: [number, number, number];
-  color: string;
-}) {
-  const meshRef = useRef<THREE.Mesh>(null);
-  const gravityEngine = useGravityEngineContext();
-  const obstacleId = `obstacle_${Math.random().toString(36).substr(2, 9)}`;
-
-  useEffect(() => {
-    const obstacleObject: GravityObject = {
-      position: new THREE.Vector3(...position),
-      velocity: new THREE.Vector3(0, 0, 0),
-      mass: 2, // 플레이어보다 무거움
-      restitution: 0.3,
-      friction: 0.7, // 장애물 마찰력 증가
-      onGround: false,
-      size: new THREE.Vector3(...size),
-      isStatic: false, // 동적 오브젝트
-      type: "obstacle" as const,
-    };
-
-    gravityEngine.addObject(obstacleId, obstacleObject);
-
-    return () => {
-      gravityEngine.removeObject(obstacleId);
-    };
-  }, [gravityEngine, obstacleId]);
-
-  useFrame(() => {
-    const obstacle = gravityEngine.getObject(obstacleId);
-    if (obstacle && meshRef.current) {
-      meshRef.current.position.copy(obstacle.position);
-    }
-  });
-
+// 메인 씬 컴포넌트
+function Scene() {
   return (
-    <mesh ref={meshRef} castShadow>
-      <boxGeometry args={size} />
-      <meshStandardMaterial color={color} />
-    </mesh>
-  );
-}
-
-export function Scene() {
-  return (
-    <div style={{ width: "100vw", height: "100vh" }}>
+    <div
+      className="w-full h-screen"
+      style={{ width: "100vw", height: "100vh", margin: 0, padding: 0 }}
+    >
       <Canvas
         camera={{
           position: [0, 5, 10],
           fov: 75,
         }}
         shadows
+        style={{ width: "100vw", height: "100vh" }}
       >
-        <GravityEngineProvider>
-          {/* 조명 설정 */}
-          <ambientLight intensity={0.4} />
-          <directionalLight
-            position={[10, 10, 5]}
-            intensity={1}
-            castShadow
-            shadow-mapSize-width={2048}
-            shadow-mapSize-height={2048}
-            shadow-camera-far={50}
-            shadow-camera-left={-10}
-            shadow-camera-right={10}
-            shadow-camera-top={10}
-            shadow-camera-bottom={-10}
-          />
+        {/* 조명 설정 */}
+        <ambientLight intensity={0.4} />
+        <directionalLight
+          position={[10, 10, 5]}
+          intensity={1}
+          castShadow
+          shadow-mapSize-width={2048}
+          shadow-mapSize-height={2048}
+          shadow-camera-far={50}
+          shadow-camera-left={-20}
+          shadow-camera-right={20}
+          shadow-camera-top={20}
+          shadow-camera-bottom={-20}
+        />
 
-          {/* 환경 설정 */}
-          <Environment preset="sunset" />
+        {/* 환경 설정 */}
+        <Environment preset="sunset" />
 
+        {/* 물리 엔진 프로바이더 */}
+        <PhysicsEngineProvider>
           {/* 3인칭 카메라 */}
-          <ThirdPersonCamera targetId="player" distance={8} height={4} />
+          <ThirdPersonCamera targetId="player" distance={6} height={2} />
 
           {/* 바닥 */}
-          <GridGround size={30} divisions={30} />
+          <CakeGround />
 
           {/* 플레이어 */}
           <Suspense fallback={null}>
-            <Player position={[0, 5, 0]} />
+            <Player position={[0, 10, 0]} weight={80} />
           </Suspense>
+        </PhysicsEngineProvider>
 
-          {/* 추가 장식용 오브젝트들 - 충돌 테스트용 */}
-          <TestObstacle position={[5, 1, 5]} size={[1, 1, 1]} color="#ff6b6b" />
-          <TestObstacle
-            position={[-5, 1, -5]}
-            size={[1, 1, 1]}
-            color="#4ecdc4"
-          />
-          <TestObstacle position={[0, 1, 8]} size={[1, 1, 1]} color="#45b7d1" />
-
-          {/* 성능 모니터링 */}
-          <Stats />
-        </GravityEngineProvider>
+        {/* 궤도 컨트롤 (디버그용) */}
+        <OrbitControls
+          enablePan={true}
+          enableZoom={true}
+          enableRotate={true}
+          minDistance={5}
+          maxDistance={50}
+        />
       </Canvas>
 
       {/* 조작 안내 */}
-      <div
-        style={{
-          position: "absolute",
-          top: "20px",
-          left: "20px",
-          color: "white",
-          background: "rgba(0,0,0,0.7)",
-          padding: "15px",
-          borderRadius: "8px",
-          fontFamily: "Arial, sans-serif",
-          fontSize: "14px",
-          lineHeight: "1.5",
-        }}
-      >
-        <h3 style={{ margin: "0 0 10px 0", color: "#4ecdc4" }}>조작법</h3>
-        <div>W/S: 전진/후진 (바닥에서만)</div>
-        <div>A/D: 좌회전/우회전 (바퀴처럼)</div>
-        <div>스페이스바: 점프 (바닥에 있을 때만)</div>
-        <div>마우스: 카메라 회전 (OrbitControls)</div>
-        <div style={{ marginTop: "10px", fontSize: "12px", color: "#ccc" }}>
-          빨간색: 점프 중 | 청록색: 착지 상태 | 바퀴처럼 회전하며 이동
+      <div className="absolute top-6 left-6 bg-black bg-opacity-70 text-white p-6 rounded-xl shadow-lg">
+        <h3 className="text-2xl font-bold mb-3">🎮 한손 조작법</h3>
+        <div className="space-y-2 text-lg">
+          <div>⬆️ I: 전진</div>
+          <div>⬇️ K: 후진</div>
+          <div>⬅️ J: 좌회전</div>
+          <div>➡️ L: 우회전</div>
+          <div>🚀 Space: 점프</div>
+          <div>🖱️ 마우스 드래그: 카메라 회전</div>
+          <div>🔍 휠: 줌 인/아웃</div>
+        </div>
+        <div className="mt-4 text-sm text-gray-300">
+          <div>⚖️ 무게: 80kg (접지력과 비례)</div>
+          <div>🔬 물리 엔진: RapierJS</div>
+          <div>🎯 기울기 물리: 현실적 무게 중심 기반</div>
         </div>
       </div>
     </div>
   );
 }
+
+export default Scene;
