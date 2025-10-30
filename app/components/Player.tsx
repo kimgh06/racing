@@ -76,6 +76,36 @@ export function Player({
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       keys.current.add(event.code);
+      // R 키로 플레이어 초기화
+      if (event.code === "KeyR") {
+        const globalRespawn = (window as any).respawnPosition as
+          | THREE.Vector3
+          | undefined;
+        const spawn = globalRespawn
+          ? globalRespawn
+          : new THREE.Vector3(...position);
+        const respYaw = (window as any).respawnRotation as number | undefined;
+        const respRoll = (window as any).respawnRoll as number | undefined;
+        const yaw = typeof respYaw === "number" ? respYaw : 0;
+        const roll = typeof respRoll === "number" ? respRoll : 0;
+
+        physicsEngine.setPosition("player", spawn);
+        physicsEngine.setVelocity("player", new THREE.Vector3(0, 0, 0));
+        // 각종 상태 리셋 및 방향/롤 설정
+        playerStateRef.current.rotation = yaw;
+        playerStateRef.current.angularVelocity = 0;
+        playerStateRef.current.tiltX = 0;
+        playerStateRef.current.tiltZ = roll;
+        playerStateRef.current.tiltVelocityX = 0;
+        playerStateRef.current.tiltVelocityZ = 0;
+        // 물리 바디 회전 반영 (Euler: x=0, y=yaw, z=roll)
+        physicsEngine.setRotation("player", new THREE.Euler(0, yaw, roll));
+        // 메쉬도 즉시 동일 회전 적용 (프레임 지연 방지)
+        if (meshRef.current) {
+          meshRef.current.rotation.set(0, yaw, roll);
+        }
+        setIsJumping(false);
+      }
     };
 
     const handleKeyUp = (event: KeyboardEvent) => {

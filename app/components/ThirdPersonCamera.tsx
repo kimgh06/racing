@@ -1,7 +1,7 @@
 import { useFrame, useThree } from "@react-three/fiber";
 import { usePhysicsEngineContext } from "./Scene";
 import * as THREE from "three";
-import { useState, useEffect } from "react";
+import { useState } from "react";
 
 interface ThirdPersonCameraProps {
   targetId: string;
@@ -19,47 +19,9 @@ export function ThirdPersonCamera({
   const { camera } = useThree();
   const physicsEngine = usePhysicsEngineContext();
 
-  // 카메라 회전 상태
+  // 카메라 회전 상태 (플레이어 회전에 동기화)
   const [cameraRotation, setCameraRotation] = useState(0);
   const [targetRotation, setTargetRotation] = useState(0);
-
-  // 마우스 입력 상태
-  const [isMouseDown, setIsMouseDown] = useState(false);
-  const [lastMouseX, setLastMouseX] = useState(0);
-
-  // 마우스 이벤트 리스너
-  useEffect(() => {
-    const handleMouseDown = (event: MouseEvent) => {
-      if (event.button === 0) {
-        // 왼쪽 마우스 버튼
-        setIsMouseDown(true);
-        setLastMouseX(event.clientX);
-      }
-    };
-
-    const handleMouseUp = () => {
-      setIsMouseDown(false);
-    };
-
-    const handleMouseMove = (event: MouseEvent) => {
-      if (isMouseDown) {
-        const deltaX = event.clientX - lastMouseX;
-        const rotationSpeed = 0.01;
-        setTargetRotation((prev) => prev + deltaX * rotationSpeed);
-        setLastMouseX(event.clientX);
-      }
-    };
-
-    window.addEventListener("mousedown", handleMouseDown);
-    window.addEventListener("mouseup", handleMouseUp);
-    window.addEventListener("mousemove", handleMouseMove);
-
-    return () => {
-      window.removeEventListener("mousedown", handleMouseDown);
-      window.removeEventListener("mouseup", handleMouseUp);
-      window.removeEventListener("mousemove", handleMouseMove);
-    };
-  }, [isMouseDown, lastMouseX]);
 
   useFrame((state, delta) => {
     const target = physicsEngine.getObject(targetId);
@@ -69,7 +31,7 @@ export function ThirdPersonCamera({
     const targetPosition = physicsEngine.getPosition(targetId);
     targetPosition.y += height; // 카메라 높이 조정
 
-    // 플레이어의 회전 정보를 가져오기
+    // 플레이어의 회전 정보를 가져오기 (마우스 입력 사용 안 함)
     if (targetId === "player") {
       const playerState = (window as any).playerState;
       if (playerState) {

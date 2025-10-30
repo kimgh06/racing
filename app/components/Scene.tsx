@@ -1,9 +1,12 @@
 import { Suspense, createContext, useContext } from "react";
 import { Canvas } from "@react-three/fiber";
-import { OrbitControls, Environment } from "@react-three/drei";
+import { Environment, Stats } from "@react-three/drei";
 import { usePhysicsEngine } from "~/physicsEngine";
 import { Player } from "./Player";
-import { CakeGround } from "./CakeGround";
+import { RacingTrack } from "./RacingTrack";
+import { StartFinishLine } from "./StartFinishLine";
+import { Checkpoint } from "./Checkpoint";
+import { GroundPlane } from "./GroundPlane";
 import { ThirdPersonCamera } from "./ThirdPersonCamera";
 
 // 물리 엔진 컨텍스트 생성
@@ -46,7 +49,7 @@ export function usePhysicsEngineContext() {
 function Scene() {
   return (
     <div
-      className="w-full h-screen"
+      className="w-full h-screen relative"
       style={{ width: "100vw", height: "100vh", margin: 0, padding: 0 }}
     >
       <Canvas
@@ -80,42 +83,74 @@ function Scene() {
           {/* 3인칭 카메라 */}
           <ThirdPersonCamera targetId="player" distance={6} height={2} />
 
-          {/* 바닥 */}
-          <CakeGround />
+          {/* 바닥 평면 */}
+          <GroundPlane />
 
-          {/* 플레이어 */}
+          {/* 레이싱 트랙 */}
+          <RacingTrack />
+
+          {/* 스타트/피니시 라인 (트랙 파라미터에 맞춤) */}
+          <StartFinishLine
+            center={[22 + 6 / 2, 0.01, 0]}
+            width={6}
+            length={0.6}
+          />
+
+          {/* 체크포인트 3개 (순서대로 1→2→3) */}
+          <Checkpoint
+            index={1}
+            center={[0, 0.01, 15]}
+            width={6}
+            length={0.6}
+            rotation={[-Math.PI / 2, 0, Math.PI / 2]}
+            nextCenter={[-25, 0.01, 0]}
+          />
+          <Checkpoint
+            index={2}
+            center={[-25, 0.01, 0]}
+            width={6}
+            length={0.6}
+            rotation={[-Math.PI / 2, 0, 0]}
+            nextCenter={[0, 0.01, -15]}
+          />
+          <Checkpoint
+            index={3}
+            center={[0, 0.01, -15]}
+            width={6}
+            length={0.6}
+            rotation={[-Math.PI / 2, 0, -Math.PI / 2]}
+            nextCenter={[22 + 6 / 2, 0.01, 0]}
+          />
+
+          {/* 플레이어 - 트랙 위 적절한 시작 위치 */}
           <Suspense fallback={null}>
-            <Player position={[0, 10, 0]} weight={80} />
+            <Player position={[28, 2, 0]} weight={80} />
           </Suspense>
         </PhysicsEngineProvider>
 
-        {/* 궤도 컨트롤 (디버그용) */}
-        <OrbitControls
-          enablePan={true}
-          enableZoom={true}
-          enableRotate={true}
-          minDistance={5}
-          maxDistance={50}
-        />
+        {/* FPS Overlay */}
+        <Stats />
       </Canvas>
 
-      {/* 조작 안내 */}
-      <div className="absolute top-6 left-6 bg-black bg-opacity-70 text-white p-6 rounded-xl shadow-lg">
-        <h3 className="text-2xl font-bold mb-3">🎮 한손 조작법</h3>
-        <div className="space-y-2 text-lg">
-          <div>⬆️ I: 전진</div>
-          <div>⬇️ K: 후진</div>
-          <div>⬅️ J: 좌회전</div>
-          <div>➡️ L: 우회전</div>
-          <div>🚀 Space: 점프</div>
-          <div>🖱️ 마우스 드래그: 카메라 회전</div>
-          <div>🔍 휠: 줌 인/아웃</div>
-        </div>
-        <div className="mt-4 text-sm text-gray-300">
-          <div>⚖️ 무게: 80kg (접지력과 비례)</div>
-          <div>🔬 물리 엔진: RapierJS</div>
-          <div>🎯 기울기 물리: 현실적 무게 중심 기반</div>
-        </div>
+      {/* 조작 안내 (Tailwind 없이도 보이도록 inline style) */}
+      <div
+        style={{
+          position: "fixed",
+          top: 12,
+          left: 12,
+          background: "rgba(0,0,0,0.7)",
+          color: "#ffffff",
+          padding: "16px",
+          borderRadius: "12px",
+          boxShadow: "0 8px 24px rgba(0,0,0,0.35)",
+          zIndex: 1000,
+          pointerEvents: "none",
+        }}
+      >
+        <h3 style={{ fontSize: 20, fontWeight: 700, marginBottom: 8 }}>
+          아이템 패널
+        </h3>
+        <div style={{ display: "grid", gap: 6, fontSize: 16 }}></div>
       </div>
     </div>
   );
