@@ -9,8 +9,10 @@ interface CheckpointProps {
   width: number; // across track
   length?: number; // along track
   color?: string;
-  rotation?: [number, number, number];
-  nextCenter?: [number, number, number]; // 다음 체크포인트 위치 (방향 표시용)
+  rotationZ?: number; // 커스텀 가능한 Z축 회전만 노출
+  nextCenter?: [number, number, number]; // 유지(화살표는 더 이상 참조하지 않음)
+  start?: boolean; // 랩 시작 지점 여부
+  end?: boolean; // 랩 종료 지점 여부 (통과 시 랩 증가)
 }
 
 export function Checkpoint({
@@ -18,9 +20,11 @@ export function Checkpoint({
   center,
   width,
   length = 0.6,
-  rotation = [-Math.PI / 2, 0, 0],
   color = "#00d1b2",
+  rotationZ = 0,
   nextCenter,
+  start = false,
+  end = false,
 }: CheckpointProps) {
   const physics = usePhysicsEngineContext();
   const planeMatRef = useRef<THREE.MeshBasicMaterial>(null);
@@ -28,17 +32,17 @@ export function Checkpoint({
   const bboxHalf = useRef({ halfX: length / 2, halfZ: width / 2 });
 
   useEffect(() => {
-    // Initialize global checkpoint state once
     const w = window as any;
     if (!w.checkpoints) {
-      w.checkpoints = { total: 3, last: 0, laps: 0 };
+      w.checkpoints = { total: 0, last: 0, laps: 0 };
     }
     if (!w._cpInside) {
       w._cpInside = {} as Record<number, boolean>;
     }
-  }, []);
+    // 동적으로 총 개수 갱신 (가장 큰 인덱스)
+    w.checkpoints.total = Math.max(w.checkpoints.total || 0, index);
+  }, [index]);
 
-  // overlap detection and sequential progress + active color update
   useFrame(() => {
     const player = physics.getObject("player");
     if (!player) return;
@@ -53,11 +57,11 @@ export function Checkpoint({
     if (!w.checkpoints) return;
     if (!w._cpInside) w._cpInside = {} as Record<number, boolean>;
 
-    // Determine which checkpoint should be active (tinted)
-    const nextIndex = (w.checkpoints.last % w.checkpoints.total) + 1;
+    const total: number = w.checkpoints.total || index;
+    const last: number = w.checkpoints.last || 0;
+    const nextIndex = (last % total || 0) + 1;
     const isActive = nextIndex === index;
 
-    // Update materials to reflect active state
     const activeColor = new THREE.Color(color);
     const inactiveColor = new THREE.Color("#ffffff");
     if (planeMatRef.current) {
@@ -74,46 +78,30 @@ export function Checkpoint({
 
     const wasInside = !!w._cpInside[index];
     if (inside && !wasInside) {
-      // Entered checkpoint
-      // Sequential check: must match next expected index
       if (w.checkpoints.last === index - 1) {
         w.checkpoints.last = index;
-        // Save respawn to checkpoint center
         w.respawnPosition = new THREE.Vector3(
           center[0],
           center[1] + 1.5,
           center[2]
         );
-        // Save respawn rotation (yaw) to align forward with track direction (toward next)
-        if (nextCenter) {
-          const dirX = nextCenter[0] - center[0];
-          const dirZ = nextCenter[2] - center[2];
-          const directionToNext = Math.atan2(dirX, dirZ); // arrow direction
-          // player forward vector is [-sin(r), -cos(r)] → align to (dirX, dirZ)
-          const heading = directionToNext + Math.PI;
-          (w as any).respawnRotation = heading;
-        }
-        // Also store roll (Z axis) from ground rotation
-        (w as any).respawnRoll = Array.isArray(rotation) ? rotation[2] ?? 0 : 0;
-        // If this was the final checkpoint, increment lap and reset sequence
-        if (index === w.checkpoints.total) {
+        (w as any).respawnRotation = rotationZ;
+        (w as any).respawnRoll = rotationZ;
+        if (end) {
           w.checkpoints.laps = (w.checkpoints.laps || 0) + 1;
           w.checkpoints.last = 0;
+        }
+        if (start) {
+          w.startIndex = index;
         }
       }
       w._cpInside[index] = true;
     } else if (!inside && wasInside) {
-      // Exited checkpoint - allow retrigger later
       w._cpInside[index] = false;
     }
   });
 
-  // Calculate direction to next checkpoint (local yaw for tiles)
-  const direction = nextCenter
-    ? Math.atan2(nextCenter[0] - center[0], nextCenter[2] - center[2])
-    : 0;
-
-  // Chevron tile config (local +Z)
+  // >>> 타일(체브론) 구성: 오직 rotationZ만 참조 (뱅크), 진행 Yaw는 리셋 방향 사용
   const chevronCount = 3;
   const tilesPerChevron = 2;
   const tileLength = 0.6;
@@ -130,47 +118,46 @@ export function Checkpoint({
   });
 
   return (
-    // Parent applies ground rotation and center position so tiles inherit it
-    <group position={center} rotation={rotation}>
-      {/* 체크포인트 평면 */}
-      <mesh>
-        <planeGeometry args={[width, length]} />
-        <meshBasicMaterial
-          ref={planeMatRef}
-          color="#ffffff"
-          transparent
-          opacity={0.35}
-          side={THREE.DoubleSide}
-        />
-      </mesh>
+    <group position={center}>
+      {/* 바닥 평면: X축 -PI/2 + Z축 rotationZ */}
+      <group rotation={[-Math.PI / 2, 0, rotationZ]}>
+        <mesh>
+          <planeGeometry args={[width, length]} />
+          <meshBasicMaterial
+            ref={planeMatRef}
+            color="#ffffff"
+            transparent
+            opacity={0.35}
+            side={THREE.DoubleSide}
+          />
+        </mesh>
+      </group>
 
-      {/* >>> 타일: additional yaw (direction) inside rotated ground space */}
-      {nextCenter && (
-        <group rotation={[0, direction, 0]}>
-          {chevrons.map((pair, idx) => (
-            <group key={idx}>
-              {pair.map((t, k) => (
-                <mesh
-                  key={k}
-                  position={[t.pos.x, t.pos.y, t.pos.z]}
-                  rotation={[0, t.rotY, 0]}
-                >
-                  <planeGeometry args={[tileLength, tileWidth]} />
-                  <meshBasicMaterial
-                    ref={(m) => {
-                      if (m) tileMatRefs.current[idx * tilesPerChevron + k] = m;
-                    }}
-                    color="#ffffff"
-                    transparent
-                    opacity={0.7}
-                    side={THREE.DoubleSide}
-                  />
-                </mesh>
-              ))}
-            </group>
-          ))}
-        </group>
-      )}
+      {/* >>> 타일도 동일하게 Z축만 적용 */}
+      <group rotation={[0, rotationZ, 0]}>
+        {chevrons.map((pair, idx) => (
+          <group key={idx}>
+            {pair.map((t, k) => (
+              <mesh
+                key={k}
+                position={[t.pos.x, t.pos.y, t.pos.z]}
+                rotation={[0, t.rotY, 0]}
+              >
+                <planeGeometry args={[tileLength, tileWidth]} />
+                <meshBasicMaterial
+                  ref={(m) => {
+                    if (m) tileMatRefs.current[idx * tilesPerChevron + k] = m;
+                  }}
+                  color="#ffffff"
+                  transparent
+                  opacity={0.7}
+                  side={THREE.DoubleSide}
+                />
+              </mesh>
+            ))}
+          </group>
+        ))}
+      </group>
     </group>
   );
 }

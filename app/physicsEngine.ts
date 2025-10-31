@@ -31,7 +31,10 @@ export class PhysicsEngine {
   private world: RAPIER.World;
   private objects: Map<string, PhysicsObject> = new Map();
   private config: PhysicsConfig;
-  private groundCollisionCallback?: (objectId: string, impactVelocity: number) => void;
+  private groundCollisionCallback?: (
+    objectId: string,
+    impactVelocity: number
+  ) => void;
 
   constructor(config: PhysicsConfig) {
     this.config = config;
@@ -63,7 +66,9 @@ export class PhysicsEngine {
   }
 
   // 바닥 충돌 콜백 설정
-  setGroundCollisionCallback(callback: (objectId: string, impactVelocity: number) => void) {
+  setGroundCollisionCallback(
+    callback: (objectId: string, impactVelocity: number) => void
+  ) {
     this.groundCollisionCallback = callback;
   }
 
@@ -71,7 +76,10 @@ export class PhysicsEngine {
   setPosition(id: string, position: THREE.Vector3) {
     const obj = this.objects.get(id);
     if (obj) {
-      obj.rigidBody.setTranslation(new RAPIER.Vector3(position.x, position.y, position.z), true);
+      obj.rigidBody.setTranslation(
+        new RAPIER.Vector3(position.x, position.y, position.z),
+        true
+      );
     }
   }
 
@@ -89,7 +97,10 @@ export class PhysicsEngine {
   setVelocity(id: string, velocity: THREE.Vector3) {
     const obj = this.objects.get(id);
     if (obj) {
-      obj.rigidBody.setLinvel(new RAPIER.Vector3(velocity.x, velocity.y, velocity.z), true);
+      obj.rigidBody.setLinvel(
+        new RAPIER.Vector3(velocity.x, velocity.y, velocity.z),
+        true
+      );
     }
   }
 
@@ -108,7 +119,15 @@ export class PhysicsEngine {
     const obj = this.objects.get(id);
     if (obj) {
       const quaternion = new THREE.Quaternion().setFromEuler(rotation);
-      obj.rigidBody.setRotation(new RAPIER.Quaternion(quaternion.x, quaternion.y, quaternion.z, quaternion.w), true);
+      obj.rigidBody.setRotation(
+        new RAPIER.Quaternion(
+          quaternion.x,
+          quaternion.y,
+          quaternion.z,
+          quaternion.w
+        ),
+        true
+      );
     }
   }
 
@@ -149,21 +168,21 @@ export class PhysicsEngine {
     for (const obj of this.objects.values()) {
       if (obj.type === "player") {
         obj.onGround = false;
-        
+
         const playerPos = this.getPosition(obj.id);
         const playerVelocity = this.getVelocity(obj.id);
-        
+
         // 모든 바닥 오브젝트와의 거리 체크
         for (const groundObj of this.objects.values()) {
           if (groundObj.type === "ground") {
             const groundPos = this.getPosition(groundObj.id);
             const groundSize = groundObj.collider.halfExtents();
-            
+
             // 플레이어가 바닥 위에 있는지 체크
             const distanceY = Math.abs(playerPos.y - groundPos.y);
             const distanceX = Math.abs(playerPos.x - groundPos.x);
             const distanceZ = Math.abs(playerPos.z - groundPos.z);
-            
+
             if (
               distanceY < 1.5 && // 플레이어 높이 + 바닥 높이
               distanceX < groundSize.x &&
@@ -171,8 +190,14 @@ export class PhysicsEngine {
               playerPos.y > groundPos.y // 플레이어가 바닥 위에 있음
             ) {
               obj.onGround = true;
-              if (this.groundCollisionCallback && Math.abs(playerVelocity.y) > 0.1) {
-                this.groundCollisionCallback(obj.id, Math.abs(playerVelocity.y));
+              if (
+                this.groundCollisionCallback &&
+                Math.abs(playerVelocity.y) > 0.1
+              ) {
+                this.groundCollisionCallback(
+                  obj.id,
+                  Math.abs(playerVelocity.y)
+                );
               }
               break;
             }
@@ -186,23 +211,23 @@ export class PhysicsEngine {
   step(deltaTime: number) {
     // Rapier 물리 시뮬레이션
     this.world.step();
-    
+
     // 바닥 충돌 감지
     this.checkGroundCollision();
-    
+
     // 맵 경계 체크
     for (const obj of this.objects.values()) {
       if (obj.type === "player") {
         this.checkMapBounds(obj.id);
       }
     }
-    
+
     // Three.js 메시와 Rapier RigidBody 동기화
     for (const obj of this.objects.values()) {
       if (obj.mesh) {
         const position = this.getPosition(obj.id);
         const rotation = this.getRotation(obj.id);
-        
+
         obj.mesh.position.copy(position);
         obj.mesh.rotation.copy(rotation);
       }
@@ -210,14 +235,25 @@ export class PhysicsEngine {
   }
 
   // 정적 바닥 생성
-  createStaticGround(id: string, position: THREE.Vector3, size: THREE.Vector3): PhysicsObject {
+  createStaticGround(
+    id: string,
+    position: THREE.Vector3,
+    size: THREE.Vector3
+  ): PhysicsObject {
     const rigidBodyDesc = RAPIER.RigidBodyDesc.fixed();
     const rigidBody = this.world.createRigidBody(rigidBodyDesc);
-    
-    const colliderDesc = RAPIER.ColliderDesc.cuboid(size.x / 2, size.y / 2, size.z / 2);
+
+    const colliderDesc = RAPIER.ColliderDesc.cuboid(
+      size.x / 2,
+      size.y / 2,
+      size.z / 2
+    );
     const collider = this.world.createCollider(colliderDesc, rigidBody);
-    
-    rigidBody.setTranslation(new RAPIER.Vector3(position.x, position.y, position.z), true);
+
+    rigidBody.setTranslation(
+      new RAPIER.Vector3(position.x, position.y, position.z),
+      true
+    );
 
     const obj: PhysicsObject = {
       id,
@@ -232,17 +268,30 @@ export class PhysicsEngine {
   }
 
   // 동적 플레이어 생성
-  createPlayer(id: string, position: THREE.Vector3, size: THREE.Vector3, mass: number = 1, weight: number = 70): PhysicsObject {
+  createPlayer(
+    id: string,
+    position: THREE.Vector3,
+    size: THREE.Vector3,
+    mass: number = 1,
+    weight: number = 70
+  ): PhysicsObject {
     const rigidBodyDesc = RAPIER.RigidBodyDesc.dynamic();
     const rigidBody = this.world.createRigidBody(rigidBodyDesc);
-    
-    const colliderDesc = RAPIER.ColliderDesc.cuboid(size.x / 2, size.y / 2, size.z / 2);
+
+    const colliderDesc = RAPIER.ColliderDesc.cuboid(
+      size.x / 2,
+      size.y / 2,
+      size.z / 2
+    );
     colliderDesc.setMass(mass);
     colliderDesc.setRestitution(0.1);
     colliderDesc.setFriction(0.98);
     const collider = this.world.createCollider(colliderDesc, rigidBody);
-    
-    rigidBody.setTranslation(new RAPIER.Vector3(position.x, position.y, position.z), true);
+
+    rigidBody.setTranslation(
+      new RAPIER.Vector3(position.x, position.y, position.z),
+      true
+    );
 
     const obj: PhysicsObject = {
       id,
@@ -258,14 +307,25 @@ export class PhysicsEngine {
   }
 
   // 정적 장애물 생성
-  createStaticObstacle(id: string, position: THREE.Vector3, size: THREE.Vector3): PhysicsObject {
+  createStaticObstacle(
+    id: string,
+    position: THREE.Vector3,
+    size: THREE.Vector3
+  ): PhysicsObject {
     const rigidBodyDesc = RAPIER.RigidBodyDesc.fixed();
     const rigidBody = this.world.createRigidBody(rigidBodyDesc);
-    
-    const colliderDesc = RAPIER.ColliderDesc.cuboid(size.x / 2, size.y / 2, size.z / 2);
+
+    const colliderDesc = RAPIER.ColliderDesc.cuboid(
+      size.x / 2,
+      size.y / 2,
+      size.z / 2
+    );
     const collider = this.world.createCollider(colliderDesc, rigidBody);
-    
-    rigidBody.setTranslation(new RAPIER.Vector3(position.x, position.y, position.z), true);
+
+    rigidBody.setTranslation(
+      new RAPIER.Vector3(position.x, position.y, position.z),
+      true
+    );
 
     const obj: PhysicsObject = {
       id,
@@ -325,9 +385,12 @@ export function usePhysicsEngine(config: PhysicsConfig) {
     return engineRef.current?.getObjects() || new Map();
   }, []);
 
-  const setGroundCollisionCallback = useCallback((callback: (objectId: string, impactVelocity: number) => void) => {
-    return engineRef.current?.setGroundCollisionCallback(callback);
-  }, []);
+  const setGroundCollisionCallback = useCallback(
+    (callback: (objectId: string, impactVelocity: number) => void) => {
+      return engineRef.current?.setGroundCollisionCallback(callback);
+    },
+    []
+  );
 
   const setPosition = useCallback((id: string, position: THREE.Vector3) => {
     return engineRef.current?.setPosition(id, position);
@@ -353,17 +416,32 @@ export function usePhysicsEngine(config: PhysicsConfig) {
     return engineRef.current?.getRotation(id) || new THREE.Euler();
   }, []);
 
-  const createStaticGround = useCallback((id: string, position: THREE.Vector3, size: THREE.Vector3) => {
-    return engineRef.current?.createStaticGround(id, position, size);
-  }, []);
+  const createStaticGround = useCallback(
+    (id: string, position: THREE.Vector3, size: THREE.Vector3) => {
+      return engineRef.current?.createStaticGround(id, position, size);
+    },
+    []
+  );
 
-  const createPlayer = useCallback((id: string, position: THREE.Vector3, size: THREE.Vector3, mass: number = 1, weight: number = 70) => {
-    return engineRef.current?.createPlayer(id, position, size, mass, weight);
-  }, []);
+  const createPlayer = useCallback(
+    (
+      id: string,
+      position: THREE.Vector3,
+      size: THREE.Vector3,
+      mass: number = 1,
+      weight: number = 70
+    ) => {
+      return engineRef.current?.createPlayer(id, position, size, mass, weight);
+    },
+    []
+  );
 
-  const createStaticObstacle = useCallback((id: string, position: THREE.Vector3, size: THREE.Vector3) => {
-    return engineRef.current?.createStaticObstacle(id, position, size);
-  }, []);
+  const createStaticObstacle = useCallback(
+    (id: string, position: THREE.Vector3, size: THREE.Vector3) => {
+      return engineRef.current?.createStaticObstacle(id, position, size);
+    },
+    []
+  );
 
   return {
     addObject,

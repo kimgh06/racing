@@ -4,7 +4,6 @@ import { Environment, Stats } from "@react-three/drei";
 import { usePhysicsEngine } from "~/physicsEngine";
 import { Player } from "./Player";
 import { RacingTrack } from "./RacingTrack";
-import { StartFinishLine } from "./StartFinishLine";
 import { Checkpoint } from "./Checkpoint";
 import { GroundPlane } from "./GroundPlane";
 import { ThirdPersonCamera } from "./ThirdPersonCamera";
@@ -47,6 +46,12 @@ export function usePhysicsEngineContext() {
 
 // 메인 씬 컴포넌트
 function Scene() {
+  // 트랙 파라미터와 일관되게 시작점 계산
+  const startCenter: [number, number, number] = [22 + 6 / 2, 0.01, 0];
+  const cp2: [number, number, number] = [0, 0.01, 15];
+  const cp3: [number, number, number] = [-25, 0.01, 0];
+  const cpEnd: [number, number, number] = [0, 0.01, -15];
+
   return (
     <div
       className="w-full h-screen relative"
@@ -89,37 +94,39 @@ function Scene() {
           {/* 레이싱 트랙 */}
           <RacingTrack />
 
-          {/* 스타트/피니시 라인 (트랙 파라미터에 맞춤) */}
-          <StartFinishLine
-            center={[22 + 6 / 2, 0.01, 0]}
-            width={6}
-            length={0.6}
-          />
-
-          {/* 체크포인트 3개 (순서대로 1→2→3) */}
+          {/* 체크포인트 (start → 2 → 3 → end) */}
           <Checkpoint
             index={1}
-            center={[0, 0.01, 15]}
+            center={startCenter}
             width={6}
             length={0.6}
-            rotation={[-Math.PI / 2, 0, Math.PI / 2]}
-            nextCenter={[-25, 0.01, 0]}
+            nextCenter={cp2}
+            start={true}
           />
           <Checkpoint
             index={2}
-            center={[-25, 0.01, 0]}
+            center={cp2}
             width={6}
             length={0.6}
-            rotation={[-Math.PI / 2, 0, 0]}
-            nextCenter={[0, 0.01, -15]}
+            rotationZ={-Math.PI / 2}
+            nextCenter={cp3}
           />
           <Checkpoint
             index={3}
-            center={[0, 0.01, -15]}
+            center={cp3}
             width={6}
             length={0.6}
-            rotation={[-Math.PI / 2, 0, -Math.PI / 2]}
-            nextCenter={[22 + 6 / 2, 0.01, 0]}
+            rotationZ={-Math.PI}
+            nextCenter={cpEnd}
+          />
+          <Checkpoint
+            index={4}
+            center={cpEnd}
+            width={6}
+            length={0.6}
+            rotationZ={Math.PI / 2}
+            nextCenter={startCenter}
+            end={true}
           />
 
           {/* 플레이어 - 트랙 위 적절한 시작 위치 */}
@@ -148,9 +155,15 @@ function Scene() {
         }}
       >
         <h3 style={{ fontSize: 20, fontWeight: 700, marginBottom: 8 }}>
-          아이템 패널
+          🎮 한손 조작법
         </h3>
-        <div style={{ display: "grid", gap: 6, fontSize: 16 }}></div>
+        <div style={{ display: "grid", gap: 6, fontSize: 16 }}>
+          <div>⬆️ I: 전진</div>
+          <div>⬇️ K: 후진</div>
+          <div>⬅️ J: 좌회전</div>
+          <div>➡️ L: 우회전</div>
+          <div>🚀 Space: 점프</div>
+        </div>
       </div>
     </div>
   );
