@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test";
 
 async function getPlayer(page: any) {
-  return await page.evaluate(() => (window as any).playerState);
+  return await page.evaluate(() => window.playerState);
 }
 
 test.describe("Collision and movement across cake tiers", () => {
@@ -14,7 +14,7 @@ test.describe("Collision and movement across cake tiers", () => {
     await page.click("canvas");
 
     // Wait for player state to be available
-    await page.waitForFunction(() => !!(window as any).playerState);
+    await page.waitForFunction(() => !!window.playerState);
 
     // Initial ground state should become true shortly after landing
     await expect
@@ -65,7 +65,7 @@ test.describe("Collision and movement across cake tiers", () => {
     await page.click("canvas");
 
     // Wait for player state to be available
-    await page.waitForFunction(() => !!(window as any).playerState);
+    await page.waitForFunction(() => !!window.playerState);
 
     // Wait for landing
     await expect

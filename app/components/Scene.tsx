@@ -1,4 +1,4 @@
-import { Suspense, createContext, useContext } from "react";
+import { Suspense, createContext, useContext, useEffect } from "react";
 import { Canvas } from "@react-three/fiber";
 import { Environment, Stats } from "@react-three/drei";
 import { usePhysicsEngine } from "~/physicsEngine";
@@ -7,6 +7,7 @@ import { RacingTrack } from "./RacingTrack";
 import { Checkpoint } from "./Checkpoint";
 import { GroundPlane } from "./GroundPlane";
 import { ThirdPersonCamera } from "./ThirdPersonCamera";
+import { useCheckPointStore } from "~/store/checkpointStore";
 
 // 물리 엔진 컨텍스트 생성
 const PhysicsEngineContext = createContext<ReturnType<
@@ -51,6 +52,9 @@ function Scene() {
   const cp2: [number, number, number] = [0, 0.01, 15];
   const cp3: [number, number, number] = [-25, 0.01, 0];
   const cpEnd: [number, number, number] = [0, 0.01, -15];
+  // 선택적 구독: laps만 구독
+  const laps = useCheckPointStore((state) => state.checkpoints.laps);
+  const last = useCheckPointStore((state) => state.checkpoints.last);
 
   return (
     <div
@@ -96,37 +100,33 @@ function Scene() {
 
           {/* 체크포인트 (start → 2 → 3 → end) */}
           <Checkpoint
-            index={1}
+            index={0}
             center={startCenter}
             width={6}
-            length={0.6}
             nextCenter={cp2}
             start={true}
+            end={true}
           />
           <Checkpoint
-            index={2}
+            index={1}
             center={cp2}
             width={6}
-            length={0.6}
             rotationZ={-Math.PI / 2}
             nextCenter={cp3}
           />
           <Checkpoint
-            index={3}
+            index={2}
             center={cp3}
             width={6}
-            length={0.6}
             rotationZ={-Math.PI}
             nextCenter={cpEnd}
           />
           <Checkpoint
-            index={4}
+            index={3}
             center={cpEnd}
             width={6}
-            length={0.6}
             rotationZ={Math.PI / 2}
             nextCenter={startCenter}
-            end={true}
           />
 
           {/* 플레이어 - 트랙 위 적절한 시작 위치 */}
@@ -139,12 +139,11 @@ function Scene() {
         <Stats />
       </Canvas>
 
-      {/* 조작 안내 (Tailwind 없이도 보이도록 inline style) */}
       <div
         style={{
           position: "fixed",
           top: 12,
-          left: 12,
+          right: 12,
           background: "rgba(0,0,0,0.7)",
           color: "#ffffff",
           padding: "16px",
@@ -155,7 +154,7 @@ function Scene() {
         }}
       >
         <h3 style={{ fontSize: 20, fontWeight: 700, marginBottom: 8 }}>
-          🎮 한손 조작법
+          Laps: {laps}-{last}
         </h3>
         <div style={{ display: "grid", gap: 6, fontSize: 16 }}>
           <div>⬆️ I: 전진</div>

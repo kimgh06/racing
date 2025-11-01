@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { usePhysicsEngineContext } from "./Scene";
+import { useCheckPointStore } from "~/store/checkpointStore";
 
 interface CheckpointProps {
   index: number; // 1..N
@@ -19,7 +20,7 @@ export function Checkpoint({
   index,
   center,
   width,
-  length = 0.6,
+  length = 3,
   color = "#00d1b2",
   rotationZ = 0,
   nextCenter,
@@ -29,75 +30,120 @@ export function Checkpoint({
   const physics = usePhysicsEngineContext();
   const planeMatRef = useRef<THREE.MeshBasicMaterial>(null);
   const tileMatRefs = useRef<THREE.MeshBasicMaterial[]>([]);
-  const bboxHalf = useRef({ halfX: length / 2, halfZ: width / 2 });
+  const checkpointId = useRef(`checkpoint-${index}`);
+  const checkpointObjectRef = useRef<any>(null);
+
+  // Color 객체 재사용 (매 프레임 생성 방지)
+  const activeColorRef = useRef(new THREE.Color(color));
+  const inactiveColorRef = useRef(new THREE.Color("#ffffff"));
+  const lastActiveStateRef = useRef(false);
+
+  // 액션 함수들은 변하지 않으므로 한 번만 구독
+  const setCheckpoints = useCheckPointStore((state) => state.setCheckpoints);
+  const setCpInside = useCheckPointStore((state) => state.setCpInside);
+  const setStartIndex = useCheckPointStore((state) => state.setStartIndex);
+  const setRespawnPosition = useCheckPointStore(
+    (state) => state.setRespawnPosition
+  );
+  const setRespawnRotation = useCheckPointStore(
+    (state) => state.setRespawnRotation
+  );
+  const setRespawnRoll = useCheckPointStore((state) => state.setRespawnRoll);
+
+  // useFrame 내에서만 필요한 값들은 getState()로 읽기 (매 프레임 최적화)
 
   useEffect(() => {
-    const w = window as any;
-    if (!w.checkpoints) {
-      w.checkpoints = { total: 0, last: 0, laps: 0 };
-    }
-    if (!w._cpInside) {
-      w._cpInside = {} as Record<number, boolean>;
-    }
     // 동적으로 총 개수 갱신 (가장 큰 인덱스)
-    w.checkpoints.total = Math.max(w.checkpoints.total || 0, index);
-  }, [index]);
+    const currentTotal = useCheckPointStore.getState().checkpoints.total;
+    if (index > currentTotal) {
+      setCheckpoints({ total: index });
+    }
+
+    // RapierJS 센서 타입 충돌체 생성 (물리 반응 없음, 충돌 감지만)
+    const timer = setTimeout(() => {
+      const checkpointObj = physics.createSensorCheckpoint(
+        checkpointId.current,
+        new THREE.Vector3(center[0], center[1] + 0.01, center[2]), // 약간 위에 배치
+        new THREE.Vector3(length, 0.5, width), // 높이는 작게 설정
+        rotationZ
+      );
+      checkpointObjectRef.current = checkpointObj;
+    }, 100);
+
+    return () => {
+      clearTimeout(timer);
+      if (checkpointObjectRef.current) {
+        physics.removeObject(checkpointId.current);
+      }
+    };
+  }, [index, center, length, width, rotationZ, physics]);
 
   useFrame(() => {
     const player = physics.getObject("player");
-    if (!player) return;
-    const p = physics.getPosition("player");
+    if (!player || !checkpointObjectRef.current) return;
 
-    const dx = Math.abs(p.x - center[0]);
-    const dz = Math.abs(p.z - center[2]);
-    const inside =
-      dx <= bboxHalf.current.halfX + 0.4 && dz <= bboxHalf.current.halfZ + 0.4;
+    // RapierJS 충돌 감지 사용
+    const inside = physics.hasContact("player", checkpointId.current);
 
-    const w = window as any;
-    if (!w.checkpoints) return;
-    if (!w._cpInside) w._cpInside = {} as Record<number, boolean>;
-
-    const total: number = w.checkpoints.total || index;
-    const last: number = w.checkpoints.last || 0;
-    const nextIndex = (last % total || 0) + 1;
+    // useFrame 내에서는 getState() 사용 (리렌더링 방지)
+    const state = useCheckPointStore.getState();
+    const total: number = state.checkpoints.total || index;
+    const last: number = state.checkpoints.last;
+    const nextIndex = (last % total) + 1;
     const isActive = nextIndex === index;
 
-    const activeColor = new THREE.Color(color);
-    const inactiveColor = new THREE.Color("#ffffff");
-    if (planeMatRef.current) {
-      planeMatRef.current.color.copy(isActive ? activeColor : inactiveColor);
-      planeMatRef.current.opacity = isActive ? 0.65 : 0.35;
-      planeMatRef.current.needsUpdate = true;
-    }
-    tileMatRefs.current.forEach((m) => {
-      if (!m) return;
-      m.color.copy(isActive ? activeColor : inactiveColor);
-      m.opacity = isActive ? 0.9 : 0.7;
-      m.needsUpdate = true;
-    });
+    // 색상이 변경된 경우에만 업데이트 (불필요한 업데이트 방지)
+    if (isActive !== lastActiveStateRef.current) {
+      lastActiveStateRef.current = isActive;
+      const targetColor = isActive
+        ? activeColorRef.current
+        : inactiveColorRef.current;
+      const targetOpacity = isActive ? 0.65 : 0.35;
 
-    const wasInside = !!w._cpInside[index];
+      if (planeMatRef.current) {
+        planeMatRef.current.color.copy(targetColor);
+        planeMatRef.current.opacity = targetOpacity;
+        planeMatRef.current.needsUpdate = true;
+      }
+
+      const tileOpacity = isActive ? 0.9 : 0.7;
+      tileMatRefs.current.forEach((m) => {
+        if (!m) return;
+        m.color.copy(targetColor);
+        m.opacity = tileOpacity;
+        m.needsUpdate = true;
+      });
+    }
+
+    const wasInside = !!state.cpInside[index];
     if (inside && !wasInside) {
-      if (w.checkpoints.last === index - 1) {
-        w.checkpoints.last = index;
-        w.respawnPosition = new THREE.Vector3(
-          center[0],
-          center[1] + 1.5,
-          center[2]
+      // 체크포인트 등록 조건:
+      // 1. 일반적인 경우: last === index - 1 (이전 체크포인트를 통과했는지 확인)
+      // 2. 랩이 끝나고 첫 번째 체크포인트로 돌아오는 경우: index === 1 && last === total
+      const isValidSequence =
+        state.checkpoints.last === index - 1 ||
+        (index === 1 && state.checkpoints.last === total);
+
+      if (isValidSequence) {
+        setCheckpoints({ last: index });
+        setRespawnPosition(
+          new THREE.Vector3(center[0], center[1] + 1.5, center[2])
         );
-        (w as any).respawnRotation = rotationZ;
-        (w as any).respawnRoll = rotationZ;
-        if (end) {
-          w.checkpoints.laps = (w.checkpoints.laps || 0) + 1;
-          w.checkpoints.last = 0;
+        setRespawnRotation(rotationZ);
+        setRespawnRoll(rotationZ);
+        if (end && last !== 0) {
+          setCheckpoints({
+            laps: (state.checkpoints.laps || 0) + 1,
+            last: 0,
+          });
         }
         if (start) {
-          w.startIndex = index;
+          setStartIndex(index);
         }
       }
-      w._cpInside[index] = true;
+      setCpInside(index, true);
     } else if (!inside && wasInside) {
-      w._cpInside[index] = false;
+      setCpInside(index, false);
     }
   });
 
@@ -122,7 +168,7 @@ export function Checkpoint({
       {/* 바닥 평면: X축 -PI/2 + Z축 rotationZ */}
       <group rotation={[-Math.PI / 2, 0, rotationZ]}>
         <mesh>
-          <planeGeometry args={[width, length]} />
+          <boxGeometry args={[width, length, 0.5]} />
           <meshBasicMaterial
             ref={planeMatRef}
             color="#ffffff"
@@ -140,7 +186,7 @@ export function Checkpoint({
             {pair.map((t, k) => (
               <mesh
                 key={k}
-                position={[t.pos.x, t.pos.y, t.pos.z]}
+                position={[t.pos.x, t.pos.y + 0.5, t.pos.z]}
                 rotation={[0, t.rotY, 0]}
               >
                 <planeGeometry args={[tileLength, tileWidth]} />

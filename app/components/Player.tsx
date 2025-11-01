@@ -1,6 +1,8 @@
 import { useRef, useState, useEffect } from "react";
 import { useFrame } from "@react-three/fiber";
 import { usePhysicsEngineContext } from "./Scene";
+import { isDynamicObject } from "~/physicsEngine";
+import { useCheckPointStore } from "~/store/checkpointStore";
 import * as THREE from "three";
 
 interface PlayerProps {
@@ -44,6 +46,9 @@ export function Player({
   // 키 입력 상태 관리
   const keys = useRef<Set<string>>(new Set());
 
+  // 디버그용 store 업데이트 throttling
+  const lastUpdateRef = useRef(0);
+
   // 플레이어 오브젝트 생성
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -78,17 +83,16 @@ export function Player({
       keys.current.add(event.code);
       // R 키로 플레이어 초기화 (반대 방향으로)
       if (event.code === "KeyR") {
-        const globalRespawn = (window as any).respawnPosition as
-          | THREE.Vector3
-          | undefined;
-        const spawn = globalRespawn
-          ? globalRespawn
+        const { respawnPosition, respawnRotation, respawnRoll } =
+          useCheckPointStore.getState();
+        const spawn = respawnPosition
+          ? respawnPosition
           : new THREE.Vector3(...position);
-        const respYaw = (window as any).respawnRotation as number | undefined;
-        const respRoll = (window as any).respawnRoll as number | undefined;
+        const respYaw = respawnRotation ?? undefined;
+        const respRollValue = respawnRoll ?? undefined;
         // 반대 방향: 저장된 yaw에 PI 추가
         const yaw = (typeof respYaw === "number" ? respYaw : 0) + Math.PI;
-        const roll = typeof respRoll === "number" ? respRoll : 0;
+        const roll = typeof respRollValue === "number" ? respRollValue : 0;
 
         physicsEngine.setPosition("player", spawn);
         physicsEngine.setVelocity("player", new THREE.Vector3(0, 0, 0));
@@ -120,8 +124,9 @@ export function Player({
 
   // 물리 및 움직임 처리
   useFrame((state, delta) => {
-    const player = physicsEngine.getObject("player");
-    if (!player) return;
+    const playerObj = physicsEngine.getObject("player");
+    if (!playerObj || !isDynamicObject(playerObj)) return;
+    const player = playerObj; // 타입 가드로 인해 DynamicPhysicsObject로 추론됨
 
     // 무게에 따른 접지력 계산
     const weightFactor = weight / 70; // 70kg 기준으로 정규화
@@ -340,9 +345,14 @@ export function Player({
       meshRef.current.rotation.z = newTiltZ;
     }
 
-    // 디버그용 전역 변수 설정
-    if (typeof window !== "undefined") {
-      (window as any).playerState = {
+    // 디버그용 전역 상태 업데이트 (throttled: 10fps로 제한)
+    const now = performance.now();
+    if (now - lastUpdateRef.current > 100) {
+      // 100ms마다 업데이트 (약 10fps)
+      lastUpdateRef.current = now;
+      const { setPlayerState, setPhysicsEngine } =
+        useCheckPointStore.getState();
+      setPlayerState({
         position: physicsEngine.getPosition("player"),
         velocity: physicsEngine.getVelocity("player"),
         rotation: newRotation,
@@ -355,8 +365,8 @@ export function Player({
         supportPoint: playerStateRef.current.supportPoint,
         weight: weight,
         weightFactor: weightFactor,
-      };
-      (window as any).physicsEngine = physicsEngine;
+      });
+      setPhysicsEngine(physicsEngine);
     }
   });
 
@@ -367,3 +377,4 @@ export function Player({
     </mesh>
   );
 }
+
