@@ -4,6 +4,7 @@ import { usePhysicsEngineContext } from "~/src/widgets/scene/Scene";
 import { isDynamicObject } from "~/src/shared/lib/physics/physicsEngine";
 import { useCheckPointStore } from "~/src/features/checkpoint-system/checkpointStore";
 import { useThirdPersonCamera } from "~/src/shared/ui/ThirdPersonCamera";
+import { InputQueue, InputProcessor, InputAction } from "./model";
 import * as THREE from "three";
 
 interface PlayerProps {
@@ -52,14 +53,25 @@ export function Player({
     supportPoint: new THREE.Vector3(0, 0, 0),
   });
 
-  // 키 입력 상태 관리
-  const keys = useRef<Set<string>>(new Set());
+  // 입력 큐 및 처리기
+  const inputQueueRef = useRef<InputQueue>(new InputQueue());
+  const inputProcessorRef = useRef<InputProcessor>(new InputProcessor());
+
+  // 고정 타임스텝 관리 (120fps 기준: 1/120초로 더 빠른 처리)
+  const fixedTimeStep = 1 / 120; // 약 8.33ms (더 빠른 입력 처리)
+  const accumulatedTimeRef = useRef(0);
+  const gameTimeRef = useRef(0);
 
   // 디버그용 store 업데이트 throttling
   const lastUpdateRef = useRef(0);
 
   // 플레이어 오브젝트 생성
   useEffect(() => {
+    // 입력 큐 초기화
+    inputQueueRef.current.setGameStartTime(performance.now());
+    gameTimeRef.current = 0;
+    accumulatedTimeRef.current = 0;
+
     const timer = setTimeout(() => {
       const playerObject = physicsEngine.createPlayer(
         "player",
@@ -127,12 +139,46 @@ export function Player({
     // 물리 바디 회전 반영 (Euler: x=0, y=yaw, z=roll)
     physicsEngine.setRotation("player", new THREE.Euler(0, yaw, roll));
     setIsJumping(false);
+
+    // 리셋 전 현재 활성 입력 상태 저장
+    const activeInputsBeforeReset = inputQueueRef.current.getCurrentInputs();
+
+    // 입력 큐 및 처리기 리셋
+    inputQueueRef.current.clear();
+    inputProcessorRef.current.reset(yaw);
+    inputQueueRef.current.setGameStartTime(performance.now());
+    gameTimeRef.current = 0;
+    accumulatedTimeRef.current = 0;
+
+    // 리셋 후에도 현재 누르고 있는 키를 다시 추가 (입력 상태 유지)
+    const currentTime = performance.now();
+    activeInputsBeforeReset.forEach((action) => {
+      inputQueueRef.current.addInput(action, true);
+    });
+
+    // 입력 처리기의 회전 상태도 업데이트
+    inputProcessorRef.current.setMovementState({
+      rotation: yaw,
+      angularVelocity: 0,
+    });
   };
 
-  // 키 입력 이벤트 리스너
+  // 키 입력 이벤트 리스너 - 입력을 큐에 저장
   useEffect(() => {
+    const keyToAction: Record<string, InputAction> = {
+      KeyI: "forward",
+      KeyK: "backward",
+      KeyJ: "turnLeft",
+      KeyL: "turnRight",
+      Space: "jump",
+    };
+
     const handleKeyDown = (event: KeyboardEvent) => {
-      keys.current.add(event.code);
+      const action = keyToAction[event.code];
+      if (action) {
+        // 입력 큐에 이벤트 추가
+        inputQueueRef.current.addInput(action, true);
+      }
       // R 키로 플레이어 초기화 (반대 방향으로)
       if (event.code === "KeyR") {
         resetPlayer();
@@ -140,7 +186,11 @@ export function Player({
     };
 
     const handleKeyUp = (event: KeyboardEvent) => {
-      keys.current.delete(event.code);
+      const action = keyToAction[event.code];
+      if (action) {
+        // 입력 큐에 이벤트 추가
+        inputQueueRef.current.addInput(action, false);
+      }
     };
 
     window.addEventListener("keydown", handleKeyDown);
@@ -152,11 +202,14 @@ export function Player({
     };
   }, []);
 
-  // 물리 및 움직임 처리
+  // 물리 및 움직임 처리 - 고정 타임스텝으로 입력 처리
   useFrame((state, delta) => {
     const playerObj = physicsEngine.getObject("player");
     if (!playerObj || !isDynamicObject(playerObj)) return;
     const player = playerObj; // 타입 가드로 인해 DynamicPhysicsObject로 추론됨
+
+    // 시간 누적
+    accumulatedTimeRef.current += delta;
 
     // 무게에 따른 접지력 계산
     const weightFactor = weight / 70; // 70kg 기준으로 정규화
@@ -169,30 +222,120 @@ export function Player({
     const turnSpeed = baseTurnSpeed * (1 / Math.sqrt(weightFactor));
     const jumpForce = baseJumpForce * Math.sqrt(weightFactor);
 
-    // 회전 상태 계산
-    let newAngularVelocity = playerStateRef.current.angularVelocity;
-    let newRotation = playerStateRef.current.rotation;
+    // 고정 타임스텝으로 입력 처리 (결정론적 움직임 보장)
+    const maxSteps = 10; // 한 프레임에서 최대 처리할 스텝 수 (더 많은 스텝 처리)
+    let stepsProcessed = 0;
+
+    while (
+      accumulatedTimeRef.current >= fixedTimeStep &&
+      stepsProcessed < maxSteps
+    ) {
+      gameTimeRef.current += fixedTimeStep;
+
+      // 현재 활성 입력 가져오기 (즉시 반응을 위해 현재 입력 상태 사용)
+      // 입력 큐는 리플레이/동기화를 위해 저장되지만, 즉시 반응을 위해 현재 상태 사용
+      const currentInputs = inputQueueRef.current.getCurrentInputs();
+
+      // 게임 시간 기준 입력도 확인 (리플레이/동기화용)
+      const timeBasedInputs = inputQueueRef.current.getActiveInputsAt(
+        gameTimeRef.current
+      );
+
+      // 두 입력을 병합
+      const activeInputs = new Set<InputAction>();
+      currentInputs.forEach((action) => activeInputs.add(action));
+      timeBasedInputs.forEach((action) => activeInputs.add(action));
+
+      // 입력 처리기의 회전 상태를 플레이어 상태와 동기화
+      inputProcessorRef.current.setMovementState({
+        rotation: playerStateRef.current.rotation,
+        angularVelocity: playerStateRef.current.angularVelocity,
+      });
+
+      // 입력 처리기를 사용하여 움직임 계산
+      const movement = inputProcessorRef.current.computeMovement(
+        activeInputs,
+        fixedTimeStep,
+        {
+          moveSpeed,
+          turnSpeed,
+          jumpForce,
+          weightFactor,
+        }
+      );
+
+      // 입력 처리기의 회전 상태를 플레이어 상태에 반영
+      playerStateRef.current.rotation = movement.rotation;
+      playerStateRef.current.angularVelocity = movement.angularVelocity;
+
+      // 점프 처리
+      if (movement.shouldJump && player.onGround && !isJumping) {
+        const currentVelocity = physicsEngine.getVelocity("player");
+        physicsEngine.setVelocity(
+          "player",
+          new THREE.Vector3(currentVelocity.x, jumpForce, currentVelocity.z)
+        );
+        setIsJumping(true);
+      }
+
+      // 이동 처리 (입력 큐 기반)
+      const currentVelocity = physicsEngine.getVelocity("player");
+      if (player.onGround) {
+        if (activeInputs.has("forward")) {
+          physicsEngine.setVelocity(
+            "player",
+            new THREE.Vector3(
+              movement.velocity.x,
+              currentVelocity.y,
+              movement.velocity.z
+            )
+          );
+        } else if (activeInputs.has("backward")) {
+          physicsEngine.setVelocity(
+            "player",
+            new THREE.Vector3(
+              movement.velocity.x,
+              currentVelocity.y,
+              movement.velocity.z
+            )
+          );
+        } else {
+          // 전진/후진 입력이 없으면 수평 속도를 무게에 비례하여 감소
+          const stopFactor = 0.1 + weightFactor * 0.2;
+          physicsEngine.setVelocity(
+            "player",
+            new THREE.Vector3(
+              currentVelocity.x * stopFactor,
+              currentVelocity.y,
+              currentVelocity.z * stopFactor
+            )
+          );
+        }
+      } else {
+        // 공중에서는 수평 속도를 천천히 감속
+        physicsEngine.setVelocity(
+          "player",
+          new THREE.Vector3(
+            currentVelocity.x * 0.99,
+            currentVelocity.y,
+            currentVelocity.z * 0.99
+          )
+        );
+      }
+
+      accumulatedTimeRef.current -= fixedTimeStep;
+      stepsProcessed++;
+    }
+
+    // 회전 상태 (입력 처리기에서 계산된 값 사용)
+    const newRotation = playerStateRef.current.rotation;
+    const newAngularVelocity = playerStateRef.current.angularVelocity;
 
     // 기울기 상태 계산
     let newTiltX = playerStateRef.current.tiltX;
     let newTiltZ = playerStateRef.current.tiltZ;
     let newTiltVelocityX = playerStateRef.current.tiltVelocityX;
     let newTiltVelocityZ = playerStateRef.current.tiltVelocityZ;
-
-    // 좌우 회전 처리 (J/L 키) - 플레이어 자체 회전
-    if (keys.current.has("KeyJ")) {
-      newAngularVelocity = turnSpeed;
-    } else if (keys.current.has("KeyL")) {
-      newAngularVelocity = -turnSpeed;
-    } else {
-      // 회전 입력이 없으면 각속도를 매우 빠르게 감소
-      newAngularVelocity *= 0.05;
-    }
-
-    // 각속도가 매우 작을 때 완전히 멈춤
-    if (Math.abs(newAngularVelocity) < 0.1) {
-      newAngularVelocity = 0;
-    }
 
     // 현실적인 기울기 물리 계산 (바닥에 있을 때만)
     if (player.onGround) {
@@ -289,9 +432,6 @@ export function Player({
       newTiltVelocityZ -= newTiltZ * restoreForce;
     }
 
-    // 회전 업데이트
-    newRotation += newAngularVelocity * delta;
-
     // 플레이어 상태 업데이트
     playerStateRef.current = {
       rotation: newRotation,
@@ -303,70 +443,6 @@ export function Player({
       centerOfMass: playerStateRef.current.centerOfMass,
       supportPoint: playerStateRef.current.supportPoint,
     };
-
-    // 이동 처리 (I/K 키) - 앞뒤 이동
-    if (player.onGround) {
-      if (keys.current.has("KeyI")) {
-        // 현재 회전 방향으로 전진
-        const forwardX = -Math.sin(newRotation);
-        const forwardZ = -Math.cos(newRotation);
-        const currentVelocity = physicsEngine.getVelocity("player");
-        physicsEngine.setVelocity(
-          "player",
-          new THREE.Vector3(
-            forwardX * moveSpeed,
-            currentVelocity.y,
-            forwardZ * moveSpeed
-          )
-        );
-      } else if (keys.current.has("KeyK")) {
-        // 현재 회전 방향의 반대로 후진
-        const backwardX = Math.sin(newRotation);
-        const backwardZ = Math.cos(newRotation);
-        const currentVelocity = physicsEngine.getVelocity("player");
-        physicsEngine.setVelocity(
-          "player",
-          new THREE.Vector3(
-            backwardX * moveSpeed,
-            currentVelocity.y,
-            backwardZ * moveSpeed
-          )
-        );
-      } else {
-        // 전진/후진 입력이 없으면 수평 속도를 무게에 비례하여 감소
-        const stopFactor = 0.1 + weightFactor * 0.2; // 무게가 클수록 더 빠르게 정지
-        const currentVelocity = physicsEngine.getVelocity("player");
-        physicsEngine.setVelocity(
-          "player",
-          new THREE.Vector3(
-            currentVelocity.x * stopFactor,
-            currentVelocity.y,
-            currentVelocity.z * stopFactor
-          )
-        );
-      }
-    } else {
-      // 공중에서는 수평 속도를 천천히 감속
-      const currentVelocity = physicsEngine.getVelocity("player");
-      physicsEngine.setVelocity(
-        "player",
-        new THREE.Vector3(
-          currentVelocity.x * 0.99,
-          currentVelocity.y,
-          currentVelocity.z * 0.99
-        )
-      );
-    }
-
-    // 점프 처리 (스페이스바)
-    if (keys.current.has("Space") && player.onGround && !isJumping) {
-      const currentVelocity = physicsEngine.getVelocity("player");
-      physicsEngine.setVelocity(
-        "player",
-        new THREE.Vector3(currentVelocity.x, jumpForce, currentVelocity.z)
-      );
-      setIsJumping(true);
-    }
 
     // 메시 회전 적용
     if (meshRef.current) {
