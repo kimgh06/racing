@@ -69,6 +69,23 @@ export function Player({
           if (objectId === "player") setIsJumping(false);
         }
       );
+
+      // 화면 로드 시 last가 0이면 시작 지점으로 자동 이동
+      const checkpointState = useCheckPointStore.getState();
+      if (checkpointState.checkpoints.last === 0) {
+        // 리스폰 위치가 있으면 그곳으로, 없으면 props로 받은 position 사용
+        const spawnPosition = checkpointState.respawnPosition
+          ? checkpointState.respawnPosition
+          : new THREE.Vector3(...position);
+
+        // 약간의 지연 후 위치 설정 (물리 엔진이 완전히 초기화된 후)
+        setTimeout(() => {
+          physicsEngine.setPosition("player", spawnPosition);
+          physicsEngine.setVelocity("player", new THREE.Vector3(0, 0, 0));
+
+          resetPlayer();
+        }, 50);
+      }
     }, 100);
 
     return () => {
@@ -77,35 +94,39 @@ export function Player({
     };
   }, []);
 
+  const resetPlayer = () => {
+    const { respawnPosition, respawnRotation, respawnRoll } =
+      useCheckPointStore.getState();
+    const spawn = respawnPosition
+      ? respawnPosition
+      : new THREE.Vector3(...position);
+    const respYaw = respawnRotation ?? undefined;
+    const respRollValue = respawnRoll ?? undefined;
+    // 반대 방향: 저장된 yaw에 PI 추가
+    const yaw = (typeof respYaw === "number" ? respYaw : 0) + Math.PI;
+    const roll = typeof respRollValue === "number" ? respRollValue : 0;
+
+    physicsEngine.setPosition("player", spawn);
+    physicsEngine.setVelocity("player", new THREE.Vector3(0, 0, 0));
+    // 각종 상태 리셋 및 방향/롤 설정
+    playerStateRef.current.rotation = yaw;
+    playerStateRef.current.angularVelocity = 0;
+    playerStateRef.current.tiltX = 0;
+    playerStateRef.current.tiltZ = roll;
+    playerStateRef.current.tiltVelocityX = 0;
+    playerStateRef.current.tiltVelocityZ = 0;
+    // 물리 바디 회전 반영 (Euler: x=0, y=yaw, z=roll)
+    physicsEngine.setRotation("player", new THREE.Euler(0, yaw, roll));
+    setIsJumping(false);
+  };
+
   // 키 입력 이벤트 리스너
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       keys.current.add(event.code);
       // R 키로 플레이어 초기화 (반대 방향으로)
       if (event.code === "KeyR") {
-        const { respawnPosition, respawnRotation, respawnRoll } =
-          useCheckPointStore.getState();
-        const spawn = respawnPosition
-          ? respawnPosition
-          : new THREE.Vector3(...position);
-        const respYaw = respawnRotation ?? undefined;
-        const respRollValue = respawnRoll ?? undefined;
-        // 반대 방향: 저장된 yaw에 PI 추가
-        const yaw = (typeof respYaw === "number" ? respYaw : 0) + Math.PI;
-        const roll = typeof respRollValue === "number" ? respRollValue : 0;
-
-        physicsEngine.setPosition("player", spawn);
-        physicsEngine.setVelocity("player", new THREE.Vector3(0, 0, 0));
-        // 각종 상태 리셋 및 방향/롤 설정
-        playerStateRef.current.rotation = yaw;
-        playerStateRef.current.angularVelocity = 0;
-        playerStateRef.current.tiltX = 0;
-        playerStateRef.current.tiltZ = roll;
-        playerStateRef.current.tiltVelocityX = 0;
-        playerStateRef.current.tiltVelocityZ = 0;
-        // 물리 바디 회전 반영 (Euler: x=0, y=yaw, z=roll)
-        physicsEngine.setRotation("player", new THREE.Euler(0, yaw, roll));
-        setIsJumping(false);
+        resetPlayer();
       }
     };
 
@@ -130,7 +151,7 @@ export function Player({
 
     // 무게에 따른 접지력 계산
     const weightFactor = weight / 70; // 70kg 기준으로 정규화
-    const baseMoveSpeed = 3;
+    const baseMoveSpeed = 10;
     const baseTurnSpeed = 1.5;
     const baseJumpForce = 12;
 
@@ -377,4 +398,3 @@ export function Player({
     </mesh>
   );
 }
-
