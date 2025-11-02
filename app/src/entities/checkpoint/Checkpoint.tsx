@@ -1,8 +1,8 @@
 import { useEffect, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
-import { usePhysicsEngineContext } from "./Scene";
-import { useCheckPointStore } from "~/store/checkpointStore";
+import { usePhysicsEngineContext } from "~/src/widgets/scene/Scene";
+import { useCheckPointStore } from "~/src/features/checkpoint-system/checkpointStore";
 
 interface CheckpointProps {
   index: number; // 1..N

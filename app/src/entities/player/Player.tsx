@@ -1,8 +1,9 @@
 import { useRef, useState, useEffect } from "react";
 import { useFrame } from "@react-three/fiber";
-import { usePhysicsEngineContext } from "./Scene";
-import { isDynamicObject } from "~/physicsEngine";
-import { useCheckPointStore } from "~/store/checkpointStore";
+import { usePhysicsEngineContext } from "~/src/widgets/scene/Scene";
+import { isDynamicObject } from "~/src/shared/lib/physics/physicsEngine";
+import { useCheckPointStore } from "~/src/features/checkpoint-system/checkpointStore";
+import { useThirdPersonCamera } from "~/src/shared/ui/ThirdPersonCamera";
 import * as THREE from "three";
 
 interface PlayerProps {
@@ -30,6 +31,14 @@ export function Player({
   const meshRef = useRef<THREE.Mesh>(null);
   const [isJumping, setIsJumping] = useState(false);
   const physicsEngine = usePhysicsEngineContext();
+
+  // 3인칭 카메라 훅 사용 (플레이어와 함께 통합)
+  useThirdPersonCamera({
+    targetId: "player",
+    distance: 6,
+    height: 2,
+    smoothness: 0.15,
+  });
 
   // 플레이어 상태 관리
   const playerStateRef = useRef<PlayerState>({

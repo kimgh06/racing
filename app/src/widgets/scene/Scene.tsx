@@ -1,13 +1,12 @@
 import { Suspense, createContext, useContext, useEffect } from "react";
 import { Canvas } from "@react-three/fiber";
 import { Environment, Stats } from "@react-three/drei";
-import { usePhysicsEngine } from "~/physicsEngine";
-import { Player } from "./Player";
-import { RacingTrack } from "./RacingTrack";
-import { Checkpoint } from "./Checkpoint";
-import { GroundPlane } from "./GroundPlane";
-import { ThirdPersonCamera } from "./ThirdPersonCamera";
-import { useCheckPointStore } from "~/store/checkpointStore";
+import { usePhysicsEngine } from "~/src/shared/lib/physics/physicsEngine";
+import { Player } from "~/src/entities/player/Player";
+import { RacingTrack } from "~/src/shared/ui/RacingTrack";
+import { Checkpoint } from "~/src/entities/checkpoint/Checkpoint";
+import { GroundPlane } from "~/src/shared/ui/GroundPlane";
+import { useCheckPointStore } from "~/src/features/checkpoint-system/checkpointStore";
 
 // 물리 엔진 컨텍스트 생성
 const PhysicsEngineContext = createContext<ReturnType<
@@ -89,9 +88,6 @@ function Scene() {
 
         {/* 물리 엔진 프로바이더 */}
         <PhysicsEngineProvider>
-          {/* 3인칭 카메라 */}
-          <ThirdPersonCamera targetId="player" distance={6} height={2} />
-
           {/* 바닥 평면 */}
           <GroundPlane />
 

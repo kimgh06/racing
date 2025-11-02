@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import * as THREE from "three";
-import type { usePhysicsEngine } from "~/physicsEngine";
+import type { usePhysicsEngine } from "~/src/shared/lib/physics/physicsEngine";
 
 interface CheckpointState {
   total: number;

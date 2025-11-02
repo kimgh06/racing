@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { usePhysicsEngineContext } from "./Scene";
+import { usePhysicsEngineContext } from "~/src/widgets/scene/Scene";
 import * as THREE from "three";
 
 interface GroundPlaneProps {
