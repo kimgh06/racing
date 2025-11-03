@@ -7,6 +7,7 @@ import { RacingTrack } from "~/src/shared/ui/RacingTrack";
 import { Checkpoint } from "~/src/entities/checkpoint/Checkpoint";
 import { GroundPlane } from "~/src/shared/ui/GroundPlane";
 import { useCheckPointStore } from "~/src/features/checkpoint-system/checkpointStore";
+import Panel from "~/src/widgets/panel/Panel";
 
 // 물리 엔진 컨텍스트 생성
 const PhysicsEngineContext = createContext<ReturnType<
@@ -51,9 +52,6 @@ function Scene() {
   const cp2: [number, number, number] = [0, 0.01, 15];
   const cp3: [number, number, number] = [-25, 0.01, 0];
   const cpEnd: [number, number, number] = [0, 0.01, -15];
-  // 선택적 구독: laps만 구독
-  const laps = useCheckPointStore((state) => state.checkpoints.laps);
-  const last = useCheckPointStore((state) => state.checkpoints.last);
 
   return (
     <div
@@ -134,32 +132,7 @@ function Scene() {
         {/* FPS Overlay */}
         <Stats />
       </Canvas>
-
-      <div
-        style={{
-          position: "fixed",
-          top: 12,
-          right: 12,
-          background: "rgba(0,0,0,0.7)",
-          color: "#ffffff",
-          padding: "16px",
-          borderRadius: "12px",
-          boxShadow: "0 8px 24px rgba(0,0,0,0.35)",
-          zIndex: 1000,
-          pointerEvents: "none",
-        }}
-      >
-        <h3 style={{ fontSize: 20, fontWeight: 700, marginBottom: 8 }}>
-          Laps: {laps}-{last}
-        </h3>
-        <div style={{ display: "grid", gap: 6, fontSize: 16 }}>
-          <div>⬆️ I: 전진</div>
-          <div>⬇️ K: 후진</div>
-          <div>⬅️ J: 좌회전</div>
-          <div>➡️ L: 우회전</div>
-          <div>🚀 Space: 점프</div>
-        </div>
-      </div>
+      <Panel />
     </div>
   );
 }

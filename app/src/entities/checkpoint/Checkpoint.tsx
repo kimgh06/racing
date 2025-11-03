@@ -3,6 +3,7 @@ import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { usePhysicsEngineContext } from "~/src/widgets/scene/Scene";
 import { useCheckPointStore } from "~/src/features/checkpoint-system/checkpointStore";
+import { useTimeStore } from "~/src/features/checkpoint-system/timeStore";
 
 interface CheckpointProps {
   index: number; // 1..N
@@ -172,6 +173,9 @@ export function Checkpoint({
             laps: newLaps,
             last: index, // 랩 완료 후 현재 체크포인트를 last로 설정
           });
+          // 랩 타이밍 기록
+          const { completeLap } = useTimeStore.getState();
+          completeLap(performance.now());
         } else {
           // 랩이 증가하지 않으면 last만 업데이트
           setCheckpoints({ last: index });

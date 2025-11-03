@@ -6,6 +6,7 @@ import { useCheckPointStore } from "~/src/features/checkpoint-system/checkpointS
 import { useThirdPersonCamera } from "~/src/shared/ui/ThirdPersonCamera";
 import { InputQueue, InputProcessor, InputAction } from "./model";
 import * as THREE from "three";
+import { useTimeStore } from "~/src/features/checkpoint-system/timeStore";
 
 interface PlayerProps {
   position?: [number, number, number];
@@ -32,6 +33,7 @@ export function Player({
   const meshRef = useRef<THREE.Mesh>(null);
   const [isJumping, setIsJumping] = useState(false);
   const physicsEngine = usePhysicsEngineContext();
+  const { setStartTime, startLap } = useTimeStore();
 
   // 3인칭 카메라 훅 사용 (플레이어와 함께 통합)
   useThirdPersonCamera({
@@ -105,6 +107,9 @@ export function Player({
           physicsEngine.setVelocity("player", new THREE.Vector3(0, 0, 0));
 
           resetPlayer();
+          const now = performance.now();
+          setStartTime(now);
+          startLap(now);
         }, 50);
       }
     }, 100);
