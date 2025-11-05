@@ -4,6 +4,7 @@ import * as THREE from "three";
 import { usePhysicsEngineContext } from "~/src/widgets/scene/Scene";
 import { useCheckPointStore } from "~/src/features/checkpoint-system/checkpointStore";
 import { useTimeStore } from "~/src/features/checkpoint-system/timeStore";
+import { useGhostStore } from "~/src/features/ghost-system/model/ghostStore";
 
 interface CheckpointProps {
   index: number; // 1..N
@@ -176,6 +177,14 @@ export function Checkpoint({
           // 랩 타이밍 기록
           const { completeLap } = useTimeStore.getState();
           completeLap(performance.now());
+          // 고스트 녹화 종료 및 즉시 재생 시작
+          const ghost = useGhostStore.getState();
+          const rec = ghost.stopRecording();
+          if (rec && rec.positions.length > 0) {
+            ghost.loadRecording(rec);
+            ghost.stopPlayback();
+            ghost.startPlayback(performance.now());
+          }
         } else {
           // 랩이 증가하지 않으면 last만 업데이트
           setCheckpoints({ last: index });

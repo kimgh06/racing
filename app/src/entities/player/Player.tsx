@@ -7,6 +7,8 @@ import { useThirdPersonCamera } from "~/src/shared/ui/ThirdPersonCamera";
 import { InputQueue, InputProcessor, InputAction } from "./model";
 import * as THREE from "three";
 import { useTimeStore } from "~/src/features/checkpoint-system/timeStore";
+import { useGhostStore } from "~/src/features/ghost-system/model/ghostStore";
+import { useGhostRecorder } from "~/src/features/ghost-system/model/useGhostRecorder";
 
 interface PlayerProps {
   position?: [number, number, number];
@@ -34,6 +36,8 @@ export function Player({
   const [isJumping, setIsJumping] = useState(false);
   const physicsEngine = usePhysicsEngineContext();
   const { setStartTime, startLap } = useTimeStore();
+  const startRecording = useGhostStore((s) => s.startRecording);
+  useGhostRecorder("player");
 
   // 3인칭 카메라 훅 사용 (플레이어와 함께 통합)
   useThirdPersonCamera({
@@ -110,6 +114,7 @@ export function Player({
           const now = performance.now();
           setStartTime(now);
           startLap(now);
+          startRecording(now);
         }, 50);
       }
     }, 100);

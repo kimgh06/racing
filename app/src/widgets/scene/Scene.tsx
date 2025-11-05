@@ -8,6 +8,7 @@ import { Checkpoint } from "~/src/entities/checkpoint/Checkpoint";
 import { GroundPlane } from "~/src/shared/ui/GroundPlane";
 import { useCheckPointStore } from "~/src/features/checkpoint-system/checkpointStore";
 import Panel from "~/src/widgets/panel/Panel";
+import { Ghost } from "~/src/features/ghost-system/ui/Ghost";
 
 // 물리 엔진 컨텍스트 생성
 const PhysicsEngineContext = createContext<ReturnType<
@@ -129,6 +130,8 @@ function Scene() {
           </Suspense>
         </PhysicsEngineProvider>
 
+        {/* Ghost playback */}
+        <Ghost />
         {/* FPS Overlay */}
         <Stats />
       </Canvas>

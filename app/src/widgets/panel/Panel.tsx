@@ -1,8 +1,9 @@
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
 import { useCheckPointStore } from "~/src/features/checkpoint-system/checkpointStore";
 import { useUptime } from "~/src/shared/lib/useUptime";
 import { useTimeStore } from "~/src/features/checkpoint-system/timeStore";
 import formatTime from "~/src/shared/lib/formatTIme";
+import { useGhostStore } from "~/src/features/ghost-system/model/ghostStore";
 
 export default function Panel() {
   // 선택적 구독: laps만 구독
@@ -19,6 +20,43 @@ export default function Panel() {
     () => (bestLapMs == null ? "-" : formatTime(bestLapMs)),
     [bestLapMs]
   );
+  const exportJson = useGhostStore((s) => s.exportJson);
+  const importJson = useGhostStore((s) => s.importJson);
+  const startPlayback = useGhostStore((s) => s.startPlayback);
+  const pausePlayback = useGhostStore((s) => s.pausePlayback);
+  const resumePlayback = useGhostStore((s) => s.resumePlayback);
+  const stopPlayback = useGhostStore((s) => s.stopPlayback);
+  const seekTo = useGhostStore((s) => s.seekTo);
+  const getDuration = useGhostStore((s) => s.getDuration);
+  const getPlayhead = useGhostStore((s) => s.getPlayhead);
+  const isPlaying = useGhostStore((s) => s.isPlaying);
+  const isPaused = useGhostStore((s) => s.isPaused);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleExport = () => {
+    const data = exportJson();
+    if (!data) return;
+    const blob = new Blob([data], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `ghost-${Date.now()}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleImportClick = () => fileInputRef.current?.click();
+  const handleImportChange: React.ChangeEventHandler<HTMLInputElement> = async (
+    e
+  ) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const text = await file.text();
+    importJson(text);
+    e.target.value = ""; // reset
+  };
 
   return (
     <div
@@ -32,7 +70,7 @@ export default function Panel() {
         borderRadius: "12px",
         boxShadow: "0 8px 24px rgba(0,0,0,0.35)",
         zIndex: 1000,
-        pointerEvents: "none",
+        pointerEvents: "auto",
       }}
     >
       <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 6 }}>
@@ -54,6 +92,86 @@ export default function Panel() {
         <div>➡️ L: 우회전</div>
         <div>🚀 Space: 점프</div>
       </div>
+      <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+        <button
+          onClick={handleExport}
+          style={{
+            padding: "6px 10px",
+            background: "#1f2937",
+            color: "#fff",
+            border: "1px solid #374151",
+            borderRadius: 6,
+            cursor: "pointer",
+          }}
+        >
+          Export Ghost
+        </button>
+        <button
+          onClick={handleImportClick}
+          style={{
+            padding: "6px 10px",
+            background: "#1f2937",
+            color: "#fff",
+            border: "1px solid #374151",
+            borderRadius: 6,
+            cursor: "pointer",
+          }}
+        >
+          Import Ghost
+        </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="application/json"
+          onChange={handleImportChange}
+          style={{ display: "none" }}
+        />
+      </div>
+      <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
+        <div style={{ display: "flex", gap: 8 }}>
+          {!isPlaying && !isPaused && (
+            <button onClick={() => startPlayback()} style={btnStyle}>
+              ▶ Play
+            </button>
+          )}
+          {isPlaying && (
+            <button onClick={() => pausePlayback()} style={btnStyle}>
+              ⏸ Pause
+            </button>
+          )}
+          {isPaused && (
+            <button onClick={() => resumePlayback()} style={btnStyle}>
+              ⏵ Resume
+            </button>
+          )}
+          <button onClick={() => stopPlayback()} style={btnStyle}>
+            ⏹ Stop
+          </button>
+        </div>
+        <div style={{ display: "grid", gap: 6 }}>
+          <input
+            type="range"
+            min={0}
+            max={getDuration()}
+            value={Math.min(getPlayhead(), getDuration())}
+            onChange={(e) => seekTo(Number(e.target.value))}
+          />
+          <div style={{ fontSize: 12, opacity: 0.85 }}>
+            {`Playhead ${formatTime(Math.floor(getPlayhead()))} / ${formatTime(
+              Math.floor(getDuration())
+            )}`}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
+
+const btnStyle: React.CSSProperties = {
+  padding: "6px 10px",
+  background: "#1f2937",
+  color: "#fff",
+  border: "1px solid #374151",
+  borderRadius: 6,
+  cursor: "pointer",
+};
