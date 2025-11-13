@@ -4,6 +4,7 @@ import { useUptime } from "~/src/shared/lib/useUptime";
 import { useTimeStore } from "~/src/features/checkpoint-system/timeStore";
 import formatTime from "~/src/shared/lib/formatTIme";
 import { useGhostStore } from "~/src/features/ghost-system/model/ghostStore";
+import { useVehicleStore } from "~/src/features/vehicle/vehicleStore";
 
 export default function Panel() {
   // 선택적 구독: laps만 구독
@@ -31,6 +32,10 @@ export default function Panel() {
   const getPlayhead = useGhostStore((s) => s.getPlayhead);
   const isPlaying = useGhostStore((s) => s.isPlaying);
   const isPaused = useGhostStore((s) => s.isPaused);
+  const vehicleType = useVehicleStore((s) => s.type);
+  const setVehicleType = useVehicleStore((s) => s.setType);
+  const motorType = useVehicleStore((s) => s.motorType);
+  const setMotorType = useVehicleStore((s) => s.setMotorType);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleExport = () => {
@@ -85,6 +90,63 @@ export default function Panel() {
       <h3 style={{ fontSize: 20, fontWeight: 700, marginBottom: 8 }}>
         Laps: {laps}-{last}
       </h3>
+      <div style={{ marginBottom: 12 }}>
+        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>
+          차량 타입
+        </div>
+        <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+          <button
+            onClick={() => setVehicleType("car")}
+            style={{
+              ...btnStyle,
+              background: vehicleType === "car" ? "#2563eb" : "#1f2937",
+            }}
+          >
+            4륜차
+          </button>
+          <button
+            onClick={() => setVehicleType("bike")}
+            style={{
+              ...btnStyle,
+              background: vehicleType === "bike" ? "#2563eb" : "#1f2937",
+            }}
+          >
+            2륜차
+          </button>
+          <button
+            onClick={() => setVehicleType("mono")}
+            style={{
+              ...btnStyle,
+              background: vehicleType === "mono" ? "#2563eb" : "#1f2937",
+            }}
+          >
+            1륜차
+          </button>
+        </div>
+        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>
+          모터 타입
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button
+            onClick={() => setMotorType("ev")}
+            style={{
+              ...btnStyle,
+              background: motorType === "ev" ? "#10b981" : "#1f2937",
+            }}
+          >
+            ⚡ 전기
+          </button>
+          <button
+            onClick={() => setMotorType("ice")}
+            style={{
+              ...btnStyle,
+              background: motorType === "ice" ? "#f59e0b" : "#1f2937",
+            }}
+          >
+            🔥 내연
+          </button>
+        </div>
+      </div>
       <div style={{ display: "grid", gap: 6, fontSize: 16 }}>
         <div>⬆️ I: 전진</div>
         <div>⬇️ K: 후진</div>
