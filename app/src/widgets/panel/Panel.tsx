@@ -36,7 +36,15 @@ export default function Panel() {
   const setVehicleType = useVehicleStore((s) => s.setType);
   const motorType = useVehicleStore((s) => s.motorType);
   const setMotorType = useVehicleStore((s) => s.setMotorType);
+  const playerState = useCheckPointStore((s) => s.playerState);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const speedKmh = useMemo(() => {
+    if (!playerState) return 0;
+    const horizontalVelocity = playerState.velocity.clone();
+    horizontalVelocity.y = 0;
+    return horizontalVelocity.length() * 3.6;
+  }, [playerState]);
 
   const handleExport = () => {
     const data = exportJson();
@@ -86,6 +94,9 @@ export default function Panel() {
       </div>
       <div style={{ fontSize: 14, marginBottom: 10 }}>
         Best Lap: {formattedBest}
+      </div>
+      <div style={{ fontSize: 14, marginBottom: 10 }}>
+        Speed: {speedKmh.toFixed(1)} km/h
       </div>
       <h3 style={{ fontSize: 20, fontWeight: 700, marginBottom: 8 }}>
         Laps: {laps}-{last}

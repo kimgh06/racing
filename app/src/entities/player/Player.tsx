@@ -57,6 +57,7 @@ export function Player({
     headTiltVelocity: 0,
     centerOfMass: new THREE.Vector3(0, 0.5, 0),
     supportPoint: new THREE.Vector3(0, 0, 0),
+    linearVelocity: new THREE.Vector3(),
   });
 
   const inputQueueRef = useRef<InputQueue>(new InputQueue());

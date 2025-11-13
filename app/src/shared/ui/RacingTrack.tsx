@@ -13,9 +13,9 @@ interface TrackConfig {
 }
 
 export function RacingTrack({
-  innerRadiusX = 22,
-  innerRadiusZ = 12,
-  trackWidth = 6,
+  innerRadiusX = 70,
+  innerRadiusZ = 40,
+  trackWidth = 15,
   height = 0.6,
   segments = 64,
   colorRoad = "#2b2b2b",

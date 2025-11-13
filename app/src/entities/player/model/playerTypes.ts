@@ -21,4 +21,5 @@ export interface PlayerState {
   headTiltVelocity: number;
   centerOfMass: THREE.Vector3;
   supportPoint: THREE.Vector3;
+  linearVelocity: THREE.Vector3;
 }

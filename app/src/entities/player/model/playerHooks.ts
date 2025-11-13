@@ -78,6 +78,7 @@ export function usePlayerInitialization({
     playerState.tiltVelocityZ = 0;
     playerState.headTilt = 0;
     playerState.headTiltVelocity = 0;
+    playerState.linearVelocity.set(0, 0, 0);
     physicsEngine.setRotation("player", new THREE.Euler(0, yaw, roll));
     setIsJumping(false);
 
@@ -109,7 +110,7 @@ export function usePlayerInitialization({
       const playerObject = physicsEngine.createPlayer(
         "player",
         new THREE.Vector3(...position),
-        new THREE.Vector3(1, 1, 1),
+        new THREE.Vector3(1.1, 1.1, 1.1), // Slightly larger collider to prevent tunneling
         mass,
         weight
       );
@@ -186,9 +187,7 @@ export function usePlayerInputHandlers(
 
     const handleKeyUp = (event: KeyboardEvent) => {
       const action = keyToAction[event.code];
-      if (action) {
-        inputQueueRef.current.addInput(action, false);
-      }
+      if (action) inputQueueRef.current.addInput(action, false);
     };
 
     window.addEventListener("keydown", handleKeyDown);
@@ -326,8 +325,7 @@ export function usePlayerMovementLoop({
     }
     playerState.driveSpeedCurrent = newDriveSpeed;
 
-    const distance = onGround ? newDriveSpeed * wheelRadius * delta : 0;
-
+    // Allow inertia: always move using current drive speed, but keys only affect when on ground.
     let rotationChange = 0;
 
     if (currentInputs.has("turnLeft"))
@@ -339,7 +337,9 @@ export function usePlayerMovementLoop({
     const steerDiff = playerState.steerAngleTarget - playerState.steerAngle;
     playerState.steerAngle += steerDiff * steerSpeed * delta;
 
-    const speed = onGround ? Math.abs(newDriveSpeed * wheelRadius) : 0;
+    const speed = onGround
+      ? Math.abs(newDriveSpeed * wheelRadius)
+      : Math.abs(newDriveSpeed * wheelRadius);
     if (speed > 0.01) {
       const turnRadius = Math.abs(
         wheelbase / Math.tan(Math.abs(playerState.steerAngle) + 0.001)
@@ -351,17 +351,60 @@ export function usePlayerMovementLoop({
       playerState.rotation += rotationChange;
     }
 
-    const currentPos = physicsEngine.getPosition("player");
-    const moveX = -Math.sin(playerState.rotation) * distance;
-    const moveZ = -Math.cos(playerState.rotation) * distance;
-    physicsEngine.setPosition(
+    const linearSpeed = newDriveSpeed * wheelRadius;
+    playerState.linearVelocity.set(
+      -Math.sin(playerState.rotation) * linearSpeed,
+      0,
+      -Math.cos(playerState.rotation) * linearSpeed
+    );
+
+    // Use velocity-based movement instead of direct position setting
+    // This allows the physics engine to properly detect collisions via CCD
+    const currentVelocity = physicsEngine.getVelocity("player");
+
+    // 충돌 체크: 장애물과 충돌했는지 확인 (체크포인트는 제외)
+    const allObjects = physicsEngine.getObjects();
+    let hasCollision = false;
+    for (const [objId, obj] of allObjects.entries()) {
+      // 체크포인트는 센서이므로 충돌 처리 제외
+      if (objId.includes("checkpoint")) continue;
+
+      if (objId !== "player" && obj.type === "obstacle") {
+        // 센서인지 확인 (센서는 충돌 처리 안 함)
+        if (obj.collider.isSensor()) continue;
+
+        if (
+          physicsEngine.hasContact &&
+          physicsEngine.hasContact("player", objId)
+        ) {
+          hasCollision = true;
+          break;
+        }
+      }
+    }
+
+    physicsEngine.setVelocity(
       "player",
       new THREE.Vector3(
-        currentPos.x + moveX,
-        currentPos.y,
-        currentPos.z + moveZ
+        playerState.linearVelocity.x,
+        currentVelocity.y, // Preserve Y velocity (gravity, jumping)
+        playerState.linearVelocity.z
       )
     );
+
+    // 충돌이 감지되면 driveSpeedCurrent를 반전시키고 에너지 손실 적용
+    if (hasCollision && Math.abs(playerState.driveSpeedCurrent ?? 0) > 0.1) {
+      const collisionLoss = PLAYER_TUNING.collisionEnergyLoss;
+      // 속도를 반전시키고 에너지 손실 적용
+      playerState.driveSpeedCurrent =
+        -(playerState.driveSpeedCurrent ?? 0) * collisionLoss;
+      // linearVelocity도 즉시 반전하고 에너지 손실 적용
+      playerState.linearVelocity.x =
+        -playerState.linearVelocity.x * collisionLoss;
+      playerState.linearVelocity.z =
+        -playerState.linearVelocity.z * collisionLoss;
+      // 물리 엔진의 velocity는 handleWallCollisions에서 이미 처리됨
+    }
 
     if (currentInputs.has("jump") && onGround && !isJumping) {
       const currentVelocity = physicsEngine.getVelocity("player");
@@ -508,7 +551,7 @@ export function usePlayerMovementLoop({
         useCheckPointStore.getState();
       setPlayerState({
         position: physicsEngine.getPosition("player"),
-        velocity: physicsEngine.getVelocity("player"),
+        velocity: playerState.linearVelocity.clone(),
         rotation: playerState.rotation,
         onGround: player.onGround,
         tiltX: playerState.tiltX,

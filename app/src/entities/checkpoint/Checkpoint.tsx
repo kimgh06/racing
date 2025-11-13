@@ -69,7 +69,7 @@ export function Checkpoint({
       // 리스폰 위치가 아직 설정되지 않았거나, last가 0인 경우 (초기 상태)
       if (state.respawnPosition === null || state.checkpoints.last === 0) {
         setRespawnPosition(
-          new THREE.Vector3(center[0], center[1] + 1.5, center[2])
+          new THREE.Vector3(center[0], center[1] + 3.0, center[2])
         );
         setRespawnRotation(rotationZ);
         setRespawnRoll(rotationZ);
@@ -82,7 +82,7 @@ export function Checkpoint({
       const checkpointObj = physics.createSensorCheckpoint(
         checkpointId.current,
         new THREE.Vector3(center[0], center[1] + 0.01, center[2]), // 약간 위에 배치
-        new THREE.Vector3(length, 0.5, width), // 높이는 작게 설정
+        new THREE.Vector3(length, 3, width), // 높이를 크게 설정하여 인식 용이
         rotationZ
       );
       checkpointObjectRef.current = checkpointObj;
@@ -192,7 +192,7 @@ export function Checkpoint({
 
         // 체크포인트 통과 시 리스폰 위치 업데이트
         setRespawnPosition(
-          new THREE.Vector3(center[0], center[1] + 1.5, center[2])
+          new THREE.Vector3(center[0], center[1] + 3.0, center[2])
         );
         setRespawnRotation(rotationZ);
         setRespawnRoll(rotationZ);

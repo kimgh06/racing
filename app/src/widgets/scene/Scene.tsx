@@ -49,10 +49,10 @@ export function usePhysicsEngineContext() {
 // 메인 씬 컴포넌트
 function Scene() {
   // 트랙 파라미터와 일관되게 시작점 계산
-  const startCenter: [number, number, number] = [22 + 6 / 2, 0.01, 0];
-  const cp2: [number, number, number] = [0, 0.01, 15];
-  const cp3: [number, number, number] = [-25, 0.01, 0];
-  const cpEnd: [number, number, number] = [0, 0.01, -15];
+  const startCenter: [number, number, number] = [70 + 15 / 2, 0.01, 0];
+  const cp2: [number, number, number] = [0, 0.01, 50];
+  const cp3: [number, number, number] = [-77.5, 0.01, 0];
+  const cpEnd: [number, number, number] = [0, 0.01, -50];
 
   return (
     <div
@@ -97,7 +97,7 @@ function Scene() {
           <Checkpoint
             index={0}
             center={startCenter}
-            width={6}
+            width={15}
             nextCenter={cp2}
             start={true}
             end={true}
@@ -105,28 +105,28 @@ function Scene() {
           <Checkpoint
             index={1}
             center={cp2}
-            width={6}
+            width={15}
             rotationZ={-Math.PI / 2}
             nextCenter={cp3}
           />
           <Checkpoint
             index={2}
             center={cp3}
-            width={6}
+            width={15}
             rotationZ={-Math.PI}
             nextCenter={cpEnd}
           />
           <Checkpoint
             index={3}
             center={cpEnd}
-            width={6}
+            width={15}
             rotationZ={Math.PI / 2}
             nextCenter={startCenter}
           />
 
           {/* 플레이어 - 트랙 위 적절한 시작 위치 */}
           <Suspense fallback={null}>
-            <Player position={[28, 2, 0]} weight={80} />
+            <Player position={[85, 2, 0]} weight={80} />
           </Suspense>
         </PhysicsEngineProvider>
 

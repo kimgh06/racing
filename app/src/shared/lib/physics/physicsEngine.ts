@@ -204,52 +204,79 @@ export class PhysicsEngine {
     }
   }
 
-  // 바닥 통과 방지: 플레이어가 바닥 아래로 떨어졌는지 확인
+  // 바닥 통과 방지 (단순화: raycast로 감지 후 보정)
   preventGroundPenetration() {
     for (const obj of this.objects.values()) {
       if (isDynamicObject(obj)) {
         const playerPos = this.getPosition(obj.id);
+        const playerHalfExtents = obj.collider.halfExtents();
 
-        // 모든 바닥 오브젝트와의 거리 체크
-        for (const groundObj of this.objects.values()) {
-          if (isStaticObject(groundObj) && groundObj.type === "ground") {
-            const groundPos = this.getPosition(groundObj.id);
-            const groundSize = groundObj.collider.halfExtents();
+        // 아래로 raycast로 바닥 감지
+        const rayOrigin = new RAPIER.Vector3(
+          playerPos.x,
+          playerPos.y,
+          playerPos.z
+        );
+        const rayDir = new RAPIER.Vector3(0, -1, 0);
+        const maxToi = playerHalfExtents.y + 0.5; // 충분한 거리
 
-            // 바닥의 상단 Y 위치
-            const groundTopY = groundPos.y + groundSize.y;
-            // 플레이어의 하단 Y 위치 (collider의 halfExtents를 고려)
-            const playerHalfExtents = obj.collider.halfExtents();
-            const playerBottomY = playerPos.y - playerHalfExtents.y;
+        const ray = new RAPIER.Ray(rayOrigin, rayDir);
+        const hit = this.world.castRay(
+          ray,
+          maxToi,
+          true,
+          undefined,
+          undefined,
+          undefined,
+          obj.rigidBody
+        );
 
-            // X, Z 범위 내에 있는지 확인
-            const distanceX = Math.abs(playerPos.x - groundPos.x);
-            const distanceZ = Math.abs(playerPos.z - groundPos.z);
+        if (hit) {
+          // hit된 collider가 체크포인트인지 확인
+          const hitCollider = (hit as any).collider;
+          if (hitCollider && hitCollider.isSensor()) {
+            // 센서(체크포인트)는 무시
+            continue;
+          }
 
-            // 바닥 위에 있어야 하는데 아래로 떨어진 경우
-            // onGround 체크를 제거하여 항상 감지하도록 함
-            if (
-              distanceX < groundSize.x &&
-              distanceZ < groundSize.z &&
-              playerBottomY < groundTopY
-            ) {
-              // 플레이어를 바닥 위로 올리기
-              const correctionY = groundTopY + playerHalfExtents.y + 0.01; // 약간의 여유 공간
-              this.setPosition(
-                obj.id,
-                new THREE.Vector3(playerPos.x, correctionY, playerPos.z)
-              );
+          // 체크포인트 ID 패턴 확인
+          const hitRigidBody = hitCollider?.parent();
+          if (hitRigidBody) {
+            let isCheckpoint = false;
+            for (const [objId, checkObj] of this.objects.entries()) {
+              if (checkObj.rigidBody.handle === hitRigidBody.handle) {
+                if (objId.includes("checkpoint")) {
+                  isCheckpoint = true;
+                  break;
+                }
+              }
+            }
+            if (isCheckpoint) continue;
+          }
 
-              // 수직 속도를 0으로 설정 (땅에 떨어뜨림)
-              const currentVelocity = this.getVelocity(obj.id);
+          const hitDistance =
+            (hit as any).timeOfImpact ?? (hit as any).toi ?? 0;
+          const groundY = playerPos.y - hitDistance;
+          const minDistance = 0.1; // 최소 거리 (5cm)
+
+          // 바닥과의 거리가 너무 가까우면 보정
+          if (hitDistance < playerHalfExtents.y + minDistance) {
+            const targetY = groundY + playerHalfExtents.y + minDistance;
+            const correctionY = targetY;
+
+            // 위치 보정
+            this.setPosition(
+              obj.id,
+              new THREE.Vector3(playerPos.x, correctionY, playerPos.z)
+            );
+
+            // 아래로 떨어지는 속도 제거
+            const currentVelocity = this.getVelocity(obj.id);
+            if (currentVelocity.y < 0) {
               this.setVelocity(
                 obj.id,
                 new THREE.Vector3(currentVelocity.x, 0, currentVelocity.z)
               );
-
-              // 바닥에 있다고 표시
-              obj.onGround = true;
-              break;
             }
           }
         }
@@ -257,7 +284,45 @@ export class PhysicsEngine {
     }
   }
 
-  // 바닥 충돌 감지 (간단한 거리 기반)
+  // 벽 충돌 처리 (충돌 방향 반대로 반사)
+  handleWallCollisions() {
+    const playerObj = this.objects.get("player");
+    if (!playerObj || !isDynamicObject(playerObj)) return;
+
+    const playerVelocity = this.getVelocity("player");
+    const horizontalSpeed = Math.sqrt(
+      playerVelocity.x * playerVelocity.x + playerVelocity.z * playerVelocity.z
+    );
+    if (horizontalSpeed < 0.1) return; // 너무 느리면 무시
+
+    // 모든 장애물과의 충돌 확인 (체크포인트는 제외)
+    for (const obj of this.objects.values()) {
+      // 체크포인트는 센서이므로 충돌 처리 제외
+      if (obj.id.includes("checkpoint")) continue;
+
+      if (isStaticObject(obj) && obj.type === "obstacle") {
+        // 센서인지 확인 (센서는 충돌 처리 안 함)
+        if (obj.collider.isSensor()) continue;
+
+        if (this.hasContact("player", obj.id)) {
+          // 충돌 시 에너지 손실 적용 (0.01 = 1%만 유지, 99% 손실)
+          const collisionEnergyLoss = 0.01;
+          // 수평 속도를 음수로 반전하고 에너지 손실 적용 (Y축 속도는 유지)
+          this.setVelocity(
+            "player",
+            new THREE.Vector3(
+              -playerVelocity.x * collisionEnergyLoss,
+              playerVelocity.y * collisionEnergyLoss,
+              -playerVelocity.z * collisionEnergyLoss
+            )
+          );
+          return; // 첫 충돌만 처리
+        }
+      }
+    }
+  }
+
+  // 바닥 충돌 감지 (단순화: raycast 사용)
   checkGroundCollision() {
     for (const obj of this.objects.values()) {
       if (isDynamicObject(obj)) {
@@ -265,36 +330,57 @@ export class PhysicsEngine {
 
         const playerPos = this.getPosition(obj.id);
         const playerVelocity = this.getVelocity(obj.id);
+        const playerHalfExtents = obj.collider.halfExtents();
 
-        // 모든 바닥 오브젝트와의 거리 체크
-        for (const groundObj of this.objects.values()) {
-          if (isStaticObject(groundObj) && groundObj.type === "ground") {
-            const groundPos = this.getPosition(groundObj.id);
-            const groundSize = groundObj.collider.halfExtents();
+        // 아래로 raycast (플레이어 하단에서 약간 아래로)
+        const rayOrigin = new RAPIER.Vector3(
+          playerPos.x,
+          playerPos.y - playerHalfExtents.y,
+          playerPos.z
+        );
+        const rayDir = new RAPIER.Vector3(0, -1, 0);
+        const maxToi = 0.2; // 최대 20cm 아래까지 체크
 
-            // 플레이어가 바닥 위에 있는지 체크
-            const distanceY = Math.abs(playerPos.y - groundPos.y);
-            const distanceX = Math.abs(playerPos.x - groundPos.x);
-            const distanceZ = Math.abs(playerPos.z - groundPos.z);
+        const ray = new RAPIER.Ray(rayOrigin, rayDir);
+        const hit = this.world.castRay(
+          ray,
+          maxToi,
+          true, // solid
+          undefined,
+          undefined,
+          undefined,
+          obj.rigidBody // 자기 자신 제외
+        );
 
-            if (
-              distanceY < 1.5 && // 플레이어 높이 + 바닥 높이
-              distanceX < groundSize.x &&
-              distanceZ < groundSize.z &&
-              playerPos.y > groundPos.y // 플레이어가 바닥 위에 있음
-            ) {
-              obj.onGround = true;
-              if (
-                this.groundCollisionCallback &&
-                Math.abs(playerVelocity.y) > 0.1
-              ) {
-                this.groundCollisionCallback(
-                  obj.id,
-                  Math.abs(playerVelocity.y)
-                );
+        if (hit) {
+          // hit된 collider가 체크포인트인지 확인
+          const hitCollider = (hit as any).collider;
+          if (hitCollider && hitCollider.isSensor()) {
+            // 센서(체크포인트)는 무시
+            continue;
+          }
+
+          // 체크포인트 ID 패턴 확인
+          const hitRigidBody = hitCollider?.parent();
+          if (hitRigidBody) {
+            let isCheckpoint = false;
+            for (const [objId, checkObj] of this.objects.entries()) {
+              if (checkObj.rigidBody.handle === hitRigidBody.handle) {
+                if (objId.includes("checkpoint")) {
+                  isCheckpoint = true;
+                  break;
+                }
               }
-              break;
             }
+            if (isCheckpoint) continue;
+          }
+
+          obj.onGround = true;
+          if (
+            this.groundCollisionCallback &&
+            Math.abs(playerVelocity.y) > 0.1
+          ) {
+            this.groundCollisionCallback(obj.id, Math.abs(playerVelocity.y));
           }
         }
       }
@@ -326,6 +412,9 @@ export class PhysicsEngine {
     if (remainingTime > 0 && subStepCount < maxSubSteps) {
       this.world.step();
     }
+
+    // 벽 충돌 처리 (장애물과의 충돌)
+    this.handleWallCollisions();
 
     // 바닥 충돌 감지
     this.checkGroundCollision();
