@@ -1,11 +1,19 @@
+import { Canvas } from "@react-three/fiber";
+import { Physics } from "@react-three/rapier";
+import { Suspense } from "react";
 import Scene from "~/src/widgets/scene/Scene";
-import Panel from "~/src/widgets/panel/Panel";
 
 export default function Index() {
   return (
     <div>
-      <Scene />
-      <Panel />
+      <Canvas style={{ width: "100svw", height: "100svh" }}>
+        <color attach="background" args={["white"]} />
+        <Suspense>
+          <Physics debug>
+            <Scene />
+          </Physics>
+        </Suspense>
+      </Canvas>
     </div>
   );
 }

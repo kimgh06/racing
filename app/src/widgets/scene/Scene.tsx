@@ -1,142 +1,153 @@
-import { Suspense, createContext, useContext, useEffect } from "react";
-import { Canvas } from "@react-three/fiber";
-import { Environment, Stats } from "@react-three/drei";
-import { usePhysicsEngine } from "~/src/shared/lib/physics/physicsEngine";
-import { Player } from "~/src/entities/player/Player";
-import { RacingTrack } from "~/src/shared/ui/RacingTrack";
-import { Checkpoint } from "~/src/entities/checkpoint/Checkpoint";
-import { GroundPlane } from "~/src/shared/ui/GroundPlane";
-import { useCheckPointStore } from "~/src/features/checkpoint-system/checkpointStore";
-import Panel from "~/src/widgets/panel/Panel";
-import { Ghost } from "~/src/features/ghost-system/ui/Ghost";
+import { useFrame, useThree } from "@react-three/fiber";
+import {
+  CuboidCollider,
+  RigidBody,
+  RapierRigidBody,
+  ConvexHullCollider,
+} from "@react-three/rapier";
+import Car, { CarHandle } from "~/src/entities/car";
+import { useEffect, useRef, useState, useMemo } from "react";
+import { Vector3, Quaternion, Euler, GridHelper, Object3D } from "three";
+import { Box } from "@react-three/drei";
 
-// 물리 엔진 컨텍스트 생성
-const PhysicsEngineContext = createContext<ReturnType<
-  typeof usePhysicsEngine
-> | null>(null);
-
-// 물리 엔진 프로바이더 컴포넌트
-function PhysicsEngineProvider({ children }: { children: React.ReactNode }) {
-  const physicsEngine = usePhysicsEngine({
-    gravity: 12,
-    mapBounds: {
-      minX: -100,
-      maxX: 100,
-      minZ: -100,
-      maxZ: 100,
-      fallHeight: -50,
-    },
-  });
-
-  return (
-    <PhysicsEngineContext.Provider value={physicsEngine}>
-      {children}
-    </PhysicsEngineContext.Provider>
-  );
-}
-
-// 물리 엔진 훅
-export function usePhysicsEngineContext() {
-  const context = useContext(PhysicsEngineContext);
-  if (!context) {
-    throw new Error(
-      "usePhysicsEngineContext must be used within a PhysicsEngineProvider"
-    );
-  }
-  return context;
-}
-
-// 메인 씬 컴포넌트
 function Scene() {
-  // 트랙 파라미터와 일관되게 시작점 계산
-  const startCenter: [number, number, number] = [70 + 15 / 2, 0.01, 0];
-  const cp2: [number, number, number] = [0, 0.01, 50];
-  const cp3: [number, number, number] = [-77.5, 0.01, 0];
-  const cpEnd: [number, number, number] = [0, 0.01, -50];
+  const { camera } = useThree();
+  const keyQueue = useRef<Record<string, boolean>>({});
+  const carRef = useRef<CarHandle>(null);
 
+  // HTML 코드: Follow cam 구조 - pivot, yaw, pitch
+  const pivot = useMemo(() => new Object3D(), []);
+  const yaw = useMemo(() => new Object3D(), []);
+  const pitch = useMemo(() => new Object3D(), []);
+
+  // HTML 코드: 카메라 계층 구조 설정
+  useEffect(() => {
+    pivot.add(yaw);
+    yaw.add(pitch);
+    pitch.add(camera);
+    camera.position.z = 4; // HTML 코드: camera.position.set(0, 0, 4)
+  }, [pivot, yaw, pitch, camera]);
+
+  // HTML 코드: Mouse controls
+  const yawRotation = useRef(0);
+  const pitchRotation = useRef(-0.3); // 카메라 기울기 고정값 (약간 아래를 보도록)
+  const cameraDistance = useRef(4);
+
+  const onDocumentMouseMove = (e: MouseEvent) => {
+    // HTML 코드: yaw.rotation.y -= e.movementX * 0.002
+    if (e.buttons === 0) return;
+    yawRotation.current -= e.movementX * 0.002;
+
+    // 카메라 기울기는 고정 (마우스로 변경 불가)
+    // pitchRotation.current는 고정값 유지
+  };
+
+  const onDocumentMouseWheel = (e: WheelEvent) => {
+    e.preventDefault();
+    // HTML 코드: const v = camera.position.z + e.deltaY * 0.005
+    const v = cameraDistance.current + e.deltaY * 0.005;
+    // HTML 코드: if (v >= 0.5 && v <= 5) { camera.position.z = v }
+    if (v >= 0.5 && v <= 5) {
+      cameraDistance.current = v;
+    }
+  };
+
+  useEffect(() => {
+    document.addEventListener("mousemove", onDocumentMouseMove);
+    document.addEventListener("wheel", onDocumentMouseWheel);
+
+    return () => {
+      document.removeEventListener("mousemove", onDocumentMouseMove);
+      document.removeEventListener("wheel", onDocumentMouseWheel);
+    };
+  }, []);
+  const handleKeyDown = (event: KeyboardEvent) =>
+    (keyQueue.current[event.key] = true);
+
+  const handleKeyUp = (event: KeyboardEvent) =>
+    delete keyQueue.current[event.key];
+
+  useEffect(() => {
+    document.addEventListener("keydown", handleKeyDown);
+    document.addEventListener("keyup", handleKeyUp);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener("keyup", handleKeyUp);
+    };
+  }, []);
+
+  useFrame((state, delta) => {
+    // 차량 입력 처리는 나중에 직접 제어 방식으로 구현 예정
+
+    // HTML 코드: Follow cam 업데이트
+    // this.followTarget.getWorldPosition(this.v)
+    if (carRef.current?.followTarget) {
+      const v = new Vector3();
+      carRef.current.followTarget.getWorldPosition(v);
+
+      // 카메라가 조금 느리게 카트를 따라가도록 lerp 속도 조정
+      pivot.position.lerp(v, delta * 15); // 조금 느리게 따라가기
+    }
+
+    // 카트의 직진 방향에 따라 시점 고정
+    if (carRef.current?.rigidBodyRef.current) {
+      const carRotation = carRef.current.rigidBodyRef.current.rotation();
+      const carQuat = new Quaternion(
+        carRotation.x,
+        carRotation.y,
+        carRotation.z,
+        carRotation.w
+      );
+
+      // Quaternion을 Euler로 변환하여 Y축 회전 각도 추출
+      const euler = new Euler().setFromQuaternion(carQuat, "YXZ");
+
+      // 카트의 Y축 회전에 카메라 yaw를 맞춤
+      const targetYaw = euler.y;
+
+      // 360도 회전 시 휙 돌아가는 현상을 완화하기 위해
+      // 현재 yaw와 목표 yaw의 차이를 -PI ~ PI 범위로 정규화하여
+      // 가장 짧은 방향으로만 회전하도록 함
+      let deltaYaw = targetYaw - yawRotation.current;
+      while (deltaYaw > Math.PI) deltaYaw -= Math.PI * 2;
+      while (deltaYaw < -Math.PI) deltaYaw += Math.PI * 2;
+
+      // 부드럽게 회전 (회전 속도 계수는 필요에 따라 조절)
+      const followSpeed = 5;
+      yawRotation.current += deltaYaw * followSpeed * delta;
+    }
+
+    yaw.rotation.y = yawRotation.current;
+    pitch.rotation.x = pitchRotation.current;
+
+    camera.position.z = cameraDistance.current;
+  });
   return (
-    <div
-      className="w-full h-screen relative"
-      style={{ width: "100vw", height: "100vh", margin: 0, padding: 0 }}
-    >
-      <Canvas
-        camera={{
-          position: [0, 5, 10],
-          fov: 75,
-        }}
-        shadows
-        style={{ width: "100vw", height: "100vh" }}
-      >
-        {/* 조명 설정 */}
-        <ambientLight intensity={0.4} />
-        <directionalLight
-          position={[10, 10, 5]}
-          intensity={1}
-          castShadow
-          shadow-mapSize-width={2048}
-          shadow-mapSize-height={2048}
-          shadow-camera-far={50}
-          shadow-camera-left={-20}
-          shadow-camera-right={20}
-          shadow-camera-top={20}
-          shadow-camera-bottom={-20}
+    <>
+      <primitive object={pivot} />
+
+      <Car ref={carRef} position={[0, 0, 0]} keyQueue={keyQueue} />
+
+      <RigidBody>
+        <Box position={[0, -1, 10]} />
+      </RigidBody>
+
+      {/* 일반 경사면 */}
+      <RigidBody type={"fixed"}>
+        <Box
+          rotation={[Math.PI / 16, 0, 0]}
+          position={[0, 0, -10]}
+          args={[3, 0.1, 25]}
         />
+      </RigidBody>
 
-        {/* 환경 설정 */}
-        <Environment preset="sunset" />
-
-        {/* 물리 엔진 프로바이더 */}
-        <PhysicsEngineProvider>
-          {/* 바닥 평면 */}
-          <GroundPlane />
-
-          {/* 레이싱 트랙 */}
-          <RacingTrack />
-
-          {/* 체크포인트 (start → 2 → 3 → end) */}
-          <Checkpoint
-            index={0}
-            center={startCenter}
-            width={15}
-            nextCenter={cp2}
-            start={true}
-            end={true}
-          />
-          <Checkpoint
-            index={1}
-            center={cp2}
-            width={15}
-            rotationZ={-Math.PI / 2}
-            nextCenter={cp3}
-          />
-          <Checkpoint
-            index={2}
-            center={cp3}
-            width={15}
-            rotationZ={-Math.PI}
-            nextCenter={cpEnd}
-          />
-          <Checkpoint
-            index={3}
-            center={cpEnd}
-            width={15}
-            rotationZ={Math.PI / 2}
-            nextCenter={startCenter}
-          />
-
-          {/* 플레이어 - 트랙 위 적절한 시작 위치 */}
-          <Suspense fallback={null}>
-            <Player position={[85, 2, 0]} weight={80} />
-          </Suspense>
-        </PhysicsEngineProvider>
-
-        {/* Ghost playback */}
-        <Ghost />
-        {/* FPS Overlay */}
-        <Stats />
-      </Canvas>
-      <Panel />
-    </div>
+      {/* 바닥 */}
+      <gridHelper position={[0, -1.5, 0]} args={[200, 200]} />
+      <CuboidCollider
+        position={[0, -2, 0]}
+        args={[100, 0.5, 100]}
+      ></CuboidCollider>
+    </>
   );
 }
 
