@@ -8,8 +8,10 @@ import {
   useImperativeHandle,
   useRef,
   useEffect,
+  useState,
 } from "react";
 import { Object3D, Vector3, Quaternion, Euler } from "three";
+import { Html } from "@react-three/drei";
 
 type CarProps = {
   position?: [number, number, number];
@@ -31,6 +33,53 @@ const Car = forwardRef<CarHandle, CarProps>(function Car(
   ref
 ) {
   const { world } = useRapier();
+
+  // ===============================
+  // 카트 튜닝용 상수 (가속/조향/드리프트 등)
+  // 여기 숫자들만 바꿔서 전체 핸들링을 쉽게 조절할 수 있음
+  // ===============================
+  const CAR_TUNING = {
+    // 전진/후진 가속
+    FORWARD: {
+      BASE_ACCEL: 2.5, // 기본 가속도 (클수록 초반 가속이 강해짐)
+      MAX_SPEED_FOR_ACCEL: 10.0, // 이 속도 근처에서 가속도 감소
+      MAX_ACCEL_FACTOR_AT_MAX_SPEED: 0.7, // 최고 속도에서의 가속도 비율 (1에 가까울수록 고속에서 더 잘 붙음)
+    },
+
+    // 드리프트 관련
+    DRIFT: {
+      SPEED_THRESHOLD: 3.0, // 이 속도 이하면 드리프트 비활성 (입력 무시)
+      ACCEL_MULTIPLIER: 0.2, // 드리프트 중 추진력 배율 (0.2면 20%만 남김)
+    },
+
+    // 옆 미끄러짐(사이드 프릭션)
+    SIDE_FRICTION: {
+      BASE: 0.05, // 직진 시 옆 속도 유지 비율 (0이면 레일달리기, 1이면 완전 미끄럼)
+      STEER: 0.1, // 조향 중 옆 속도 유지 비율
+      DRIFT: 0.6, // 드리프트 중 옆 속도 유지 비율
+    } as {
+      BASE: number;
+      STEER: number;
+      DRIFT: number;
+    },
+
+    // 조향 토크/드리프트 회전
+    STEER: {
+      TORQUE_MULTIPLIER: 2.0, // 기본 조향 토크 배율 (클수록 전체 회전이 강해짐)
+      DRIFT_TORQUE_MULTIPLIER: 5.0, // 드리프트 중 추가 회전 배율
+      MAX_TORQUE: {
+        NORMAL: {
+          LOW_SPEED: 5.0,
+          HIGH_SPEED: 3.0,
+        },
+        DRIFT: {
+          LOW_SPEED: 8.0,
+          HIGH_SPEED: 6.0,
+        },
+      },
+    },
+  } as const;
+
   const cartbodyRef = useRef<RapierRigidBody>(null);
   const followTarget = useRef(new Object3D()).current;
   const steerAngle = useRef(0);
@@ -42,13 +91,19 @@ const Car = forwardRef<CarHandle, CarProps>(function Car(
   // 충돌 감지 상태
   const objectHit = useRef(false); // 어떤 물체와든 현재 접촉 중인지
   const contactCount = useRef(0); // 어떤 물체와든 현재 접촉 중인 개수
+  const groundContactCount = useRef(0); // 바닥 충돌만 카운트
+
   const groundNormal = useRef({ x: 0, y: 1, z: 0 });
   const groundContactPoint = useRef<{ x: number; y: number; z: number } | null>(
     null
   );
 
+  // 상태 패널용 상태 관리
+  const [displaySpeed, setDisplaySpeed] = useState(0);
+  const [displayCollision, setDisplayCollision] = useState(false);
+
   // 호버보드 설정
-  const GROUND_OFFSET = 0.2; // 바닥에서의 오프셋 (최소 0.2 높이)
+  const GROUND_OFFSET = 0.05; // 바닥에서의 오프셋 (최소 0.2 높이)
   const MAX_HEIGHT = maxHeight ?? Infinity; // 최대 높이 제한
   const MAX_HEIGHT_DIFF = 2.0; // 최대 높이 차이 (이 이상 차이나면 힘 제한)
 
@@ -71,6 +126,511 @@ const Car = forwardRef<CarHandle, CarProps>(function Car(
     }
   }, [position]);
 
+  // ===============================
+  // 물리 로직 함수들
+  // ===============================
+
+  // 1. 호버보드 로직: 바닥/벽 충돌 시 높이 유지
+  const handleHoverboardLogic = (delta: number) => {
+    if (
+      !cartbodyRef.current ||
+      !objectHit.current ||
+      jumpCooldown.current > 0
+    ) {
+      return;
+    }
+
+    const currentPos = cartbodyRef.current.translation();
+    const isGround = groundNormal.current.y > 0.7;
+
+    let targetY: number;
+    if (isGround && groundContactPoint.current) {
+      targetY = groundContactPoint.current.y + GROUND_OFFSET;
+    } else {
+      targetY = currentPos.y + GROUND_OFFSET;
+    }
+
+    const heightDiff = targetY - currentPos.y;
+
+    if (heightDiff > -0.05) {
+      const clampedHeightDiff = Math.min(
+        Math.max(heightDiff, 0),
+        MAX_HEIGHT_DIFF
+      );
+
+      const forceStrength = Math.max(
+        clampedHeightDiff * delta * 200,
+        2.0 * delta
+      );
+
+      if (MAX_HEIGHT === Infinity || currentPos.y < MAX_HEIGHT) {
+        let impulse: Vector3;
+
+        if (isGround) {
+          const normalLength = Math.sqrt(
+            groundNormal.current.x ** 2 +
+              groundNormal.current.y ** 2 +
+              groundNormal.current.z ** 2
+          );
+
+          if (normalLength > 0.01) {
+            const normalizedNormal = {
+              x: groundNormal.current.x / normalLength,
+              y: groundNormal.current.y / normalLength,
+              z: groundNormal.current.z / normalLength,
+            };
+
+            impulse = new Vector3(
+              normalizedNormal.x * forceStrength,
+              normalizedNormal.y * forceStrength,
+              normalizedNormal.z * forceStrength
+            );
+          } else {
+            impulse = new Vector3(0, forceStrength, 0);
+          }
+        } else {
+          impulse = new Vector3(0, forceStrength, 0);
+        }
+
+        cartbodyRef.current.applyImpulse(impulse, true);
+      }
+    }
+
+    const linvel = cartbodyRef.current.linvel();
+    if (linvel.y > 3.0) {
+      cartbodyRef.current.setLinvel({ x: linvel.x, y: 3.0, z: linvel.z }, true);
+    }
+  };
+
+  // 2. 입력 처리: 가속, 조향, 점프
+  const handleInput = (delta: number) => {
+    if (!keyQueue?.current) return;
+
+    const keys = keyQueue.current;
+
+    // 공중에 떠 있으면 앞뒤 조작 불가
+    if (!objectHit.current) {
+      targetSpeed.current *= 0.9;
+    } else {
+      if (keys["i"] || keys["I"]) {
+        targetSpeed.current = 10.0;
+      } else if (keys["k"] || keys["K"]) {
+        targetSpeed.current = -5.0;
+      } else {
+        targetSpeed.current *= 0.9;
+      }
+    }
+
+    // 조향 입력
+    const isSteeringLeft = keys["j"] || keys["J"];
+    const isSteeringRight = keys["l"] || keys["L"];
+
+    steerAngle.current = 0;
+    if (isSteeringLeft) steerAngle.current += 3.0 * delta;
+    else if (isSteeringRight) steerAngle.current -= 3.0 * delta;
+
+    // 점프 입력 처리
+    const isJumpPressed = keys[" "] || keys["Space"];
+
+    if (jumpCooldown.current > 0) {
+      jumpCooldown.current -= delta;
+    } else {
+      canJump.current = true;
+    }
+
+    if (
+      isJumpPressed &&
+      objectHit.current &&
+      canJump.current &&
+      jumpCooldown.current <= 0 &&
+      cartbodyRef.current
+    ) {
+      const JUMP_FORCE = 5.0;
+      cartbodyRef.current.applyImpulse({ x: 0, y: JUMP_FORCE, z: 0 }, true);
+
+      jumpCooldown.current = 0.5;
+      canJump.current = false;
+    }
+
+    const MAX_STEER = Math.PI / 4;
+    steerAngle.current = Math.max(
+      -MAX_STEER,
+      Math.min(MAX_STEER, steerAngle.current)
+    );
+  };
+
+  // 3. 방향 전환 처리: 갑작스런 반대 방향 입력 시 속도 전환
+  const handleDirectionReversal = (forward: Vector3) => {
+    if (!objectHit.current || !cartbodyRef.current) return;
+
+    const wasMovingForward = prevTargetSpeed.current > 0.1;
+    const wasMovingBackward = prevTargetSpeed.current < -0.1;
+    const isReversing = targetSpeed.current < -0.1;
+    const isForwarding = targetSpeed.current > 0.1;
+
+    const vel = cartbodyRef.current.linvel();
+    const speedForward = vel.x * forward.x + vel.z * forward.z;
+
+    if (wasMovingForward && isReversing && speedForward > 1.0) {
+      const reverseSpeed = -speedForward * 0.3;
+      const newVel = {
+        x: vel.x - forward.x * speedForward + forward.x * reverseSpeed,
+        y: vel.y,
+        z: vel.z - forward.z * speedForward + forward.z * reverseSpeed,
+      };
+      cartbodyRef.current.setLinvel(newVel, true);
+    }
+
+    if (wasMovingBackward && isForwarding && speedForward < -1.0) {
+      const forwardSpeed = -speedForward * 0.5;
+      const newVel = {
+        x: vel.x - forward.x * speedForward + forward.x * forwardSpeed,
+        y: vel.y,
+        z: vel.z - forward.z * speedForward + forward.z * forwardSpeed,
+      };
+      cartbodyRef.current.setLinvel(newVel, true);
+    }
+
+    prevTargetSpeed.current = targetSpeed.current;
+  };
+
+  // 4. 횡방향 마찰 처리
+  const handleSideFriction = (forward: Vector3) => {
+    if (
+      !objectHit.current ||
+      groundNormal.current.y <= 0.9 ||
+      !cartbodyRef.current
+    ) {
+      return;
+    }
+
+    const vel = cartbodyRef.current.linvel();
+    const speedForward = vel.x * forward.x + vel.z * forward.z;
+    const velForward = {
+      x: forward.x * speedForward,
+      y: 0,
+      z: forward.z * speedForward,
+    };
+    const velSide = {
+      x: vel.x - velForward.x,
+      y: 0,
+      z: vel.z - velForward.z,
+    };
+
+    const isSteeringActive =
+      keyQueue?.current &&
+      (keyQueue.current["j"] ||
+        keyQueue.current["J"] ||
+        keyQueue.current["l"] ||
+        keyQueue.current["L"]);
+
+    const isDriftModeSide =
+      objectHit.current &&
+      Math.sqrt(vel.x ** 2 + vel.z ** 2) > CAR_TUNING.DRIFT.SPEED_THRESHOLD &&
+      keyQueue?.current &&
+      (keyQueue.current["D"] || keyQueue.current["d"]);
+
+    const baseSideFriction = CAR_TUNING.SIDE_FRICTION.BASE;
+    let sideFriction = baseSideFriction;
+    if (isDriftModeSide) {
+      sideFriction = CAR_TUNING.SIDE_FRICTION.DRIFT;
+    } else if (isSteeringActive) {
+      sideFriction = CAR_TUNING.SIDE_FRICTION.STEER;
+    }
+
+    const newVel = {
+      x: velForward.x + velSide.x * sideFriction,
+      y: vel.y,
+      z: velForward.z + velSide.z * sideFriction,
+    };
+
+    cartbodyRef.current.setLinvel(newVel, true);
+  };
+
+  // 5. 이동 힘 계산 및 적용
+  const handleMoveForce = (forward: Vector3, delta: number) => {
+    if (!cartbodyRef.current) return;
+
+    const velForAccel = cartbodyRef.current.linvel();
+    const speedForAccel = Math.sqrt(velForAccel.x ** 2 + velForAccel.z ** 2);
+
+    const isDriftModeAccel =
+      objectHit.current &&
+      speedForAccel > CAR_TUNING.DRIFT.SPEED_THRESHOLD &&
+      keyQueue?.current &&
+      (keyQueue.current["D"] || keyQueue.current["d"]);
+
+    let effectiveSpeed = targetSpeed.current;
+    if (isDriftModeAccel) {
+      effectiveSpeed *= CAR_TUNING.DRIFT.ACCEL_MULTIPLIER;
+    }
+
+    const baseAccel = CAR_TUNING.FORWARD.BASE_ACCEL;
+    const maxSpeedFactor = CAR_TUNING.FORWARD.MAX_ACCEL_FACTOR_AT_MAX_SPEED;
+    const speedRatio = Math.min(
+      speedForAccel / CAR_TUNING.FORWARD.MAX_SPEED_FOR_ACCEL,
+      1.0
+    );
+    const accelFactor = baseAccel * (1.0 - speedRatio * (1.0 - maxSpeedFactor));
+
+    const moveForce = new Vector3(
+      forward.x * effectiveSpeed * accelFactor,
+      0,
+      forward.z * effectiveSpeed * accelFactor
+    );
+
+    cartbodyRef.current.applyImpulse(
+      {
+        x: moveForce.x * delta,
+        y: moveForce.y * delta,
+        z: moveForce.z * delta,
+      },
+      true
+    );
+  };
+
+  // 6. 스텝 스냅: 낮은 계단 오르기
+  const handleStepSnap = (forward: Vector3) => {
+    if (
+      !targetSpeed.current ||
+      !objectHit.current ||
+      !groundContactPoint.current ||
+      groundNormal.current.y <= 0.7 ||
+      !cartbodyRef.current
+    ) {
+      return;
+    }
+
+    const currentPos = cartbodyRef.current.translation();
+    const frontPos = {
+      x: currentPos.x + forward.x * 0.6,
+      y: currentPos.y + 0.01,
+      z: currentPos.z + forward.z * 0.6,
+    };
+    const downDir = { x: 0.0, y: -1.0, z: 0.0 };
+
+    const stepRay = new Ray(frontPos, downDir);
+    const stepHit = world.castRay(stepRay, 1.0, true);
+
+    if (stepHit) {
+      const hitY = frontPos.y + downDir.y * stepHit.timeOfImpact;
+      const currentGroundY = groundContactPoint.current.y;
+      const stepHeight = hitY - currentGroundY;
+      const MAX_STEP_HEIGHT = 0.1;
+
+      if (stepHeight > 0 && stepHeight < MAX_STEP_HEIGHT) {
+        const linvel = cartbodyRef.current.linvel();
+        cartbodyRef.current.setTranslation(
+          {
+            x: currentPos.x,
+            y: hitY + GROUND_OFFSET,
+            z: currentPos.z,
+          },
+          true
+        );
+        cartbodyRef.current.setLinvel({ x: linvel.x, y: 0, z: linvel.z }, true);
+      }
+    }
+  };
+
+  // 7. 조향 토크 처리
+  const handleSteeringTorque = (currentQuat: Quaternion, delta: number) => {
+    if (!cartbodyRef.current) return;
+
+    const currentVel = cartbodyRef.current.linvel();
+    const currentSpeed = Math.sqrt(currentVel.x ** 2 + currentVel.z ** 2);
+
+    const carForward = new Vector3(0, 0, -1);
+    carForward.applyQuaternion(currentQuat);
+    const velocityDir =
+      currentSpeed > 0.1
+        ? new Vector3(
+            currentVel.x / currentSpeed,
+            0,
+            currentVel.z / currentSpeed
+          )
+        : carForward;
+    const isReversing = carForward.dot(velocityDir) < 0;
+
+    const isSteeringActive =
+      keyQueue?.current &&
+      (keyQueue.current["j"] ||
+        keyQueue.current["J"] ||
+        keyQueue.current["l"] ||
+        keyQueue.current["L"]);
+
+    if (!isSteeringActive) {
+      const angvel = cartbodyRef.current.angvel();
+      cartbodyRef.current.setAngvel(
+        {
+          x: angvel.x,
+          y: 0,
+          z: angvel.z,
+        },
+        true
+      );
+      steerAngle.current = 0;
+      return;
+    }
+
+    if (isSteeringActive && Math.abs(steerAngle.current) > 0.01) {
+      if (currentSpeed > 0.1) {
+        const speedFactor = Math.max(
+          currentSpeed / CAR_TUNING.FORWARD.MAX_SPEED_FOR_ACCEL,
+          0.3
+        );
+        let torqueStrength =
+          steerAngle.current * speedFactor * CAR_TUNING.STEER.TORQUE_MULTIPLIER;
+
+        const speedDamping = Math.min(1.0, 5.0 / currentSpeed);
+        const speedBoost = Math.max(1.0, 3.0 / currentSpeed);
+        torqueStrength *= speedDamping * speedBoost;
+
+        const isDriftModeSteer =
+          objectHit.current &&
+          currentSpeed > CAR_TUNING.DRIFT.SPEED_THRESHOLD &&
+          keyQueue?.current &&
+          (keyQueue.current["D"] || keyQueue.current["d"]);
+
+        if (isDriftModeSteer) {
+          torqueStrength *= CAR_TUNING.STEER.DRIFT_TORQUE_MULTIPLIER;
+        }
+
+        const maxTorque = isDriftModeSteer
+          ? currentSpeed < CAR_TUNING.DRIFT.SPEED_THRESHOLD
+            ? CAR_TUNING.STEER.MAX_TORQUE.DRIFT.LOW_SPEED
+            : CAR_TUNING.STEER.MAX_TORQUE.DRIFT.HIGH_SPEED
+          : currentSpeed < CAR_TUNING.DRIFT.SPEED_THRESHOLD
+          ? CAR_TUNING.STEER.MAX_TORQUE.NORMAL.LOW_SPEED
+          : CAR_TUNING.STEER.MAX_TORQUE.NORMAL.HIGH_SPEED;
+        torqueStrength = Math.max(
+          -maxTorque,
+          Math.min(maxTorque, torqueStrength)
+        );
+
+        if (isReversing) {
+          torqueStrength = -torqueStrength;
+        }
+
+        cartbodyRef.current.applyTorqueImpulse(
+          {
+            x: 0,
+            y: torqueStrength * delta,
+            z: 0,
+          },
+          true
+        );
+      } else {
+        let torqueStrength = steerAngle.current * 0.5;
+        if (targetSpeed.current < 0) {
+          torqueStrength = -torqueStrength;
+        }
+
+        cartbodyRef.current.applyTorqueImpulse(
+          {
+            x: 0,
+            y: torqueStrength * delta,
+            z: 0,
+          },
+          true
+        );
+      }
+    }
+  };
+
+  // 8. 경사면 정렬
+  const handleSlopeAlignment = (delta: number) => {
+    if (
+      !objectHit.current ||
+      groundNormal.current.y <= 0.7 ||
+      groundNormal.current.y >= 0.99 ||
+      !cartbodyRef.current
+    ) {
+      return;
+    }
+
+    const up = new Vector3(0, 1, 0);
+    const targetUp = new Vector3(
+      groundNormal.current.x,
+      groundNormal.current.y,
+      groundNormal.current.z
+    );
+    const rotationAxis = new Vector3().crossVectors(up, targetUp).normalize();
+    const rotationAngle = Math.acos(
+      Math.max(-1, Math.min(1, up.dot(targetUp)))
+    );
+
+    if (rotationAngle > 0.01) {
+      cartbodyRef.current.applyTorqueImpulse(
+        {
+          x: rotationAxis.x * rotationAngle * 0.5 * delta,
+          y: rotationAxis.y * rotationAngle * 0.5 * delta,
+          z: rotationAxis.z * rotationAngle * 0.5 * delta,
+        },
+        true
+      );
+    }
+  };
+
+  // 9. 뒤집힘 복구
+  const handleUpsideDownRecovery = (currentQuat: Quaternion, delta: number) => {
+    if (!objectHit.current || !cartbodyRef.current) return;
+
+    const carUp = new Vector3(0, 1, 0);
+    carUp.applyQuaternion(currentQuat);
+
+    const upsideDownThreshold = 0.3;
+
+    if (carUp.y < upsideDownThreshold) {
+      const targetUp = new Vector3(0, 1, 0);
+      const rotationAxis = new Vector3().crossVectors(carUp, targetUp);
+      const rotationAngle = Math.acos(
+        Math.max(-1, Math.min(1, carUp.dot(targetUp)))
+      );
+
+      if (rotationAngle > 0.01 && rotationAxis.length() > 0.01) {
+        rotationAxis.normalize();
+
+        const recoveryStrength = 5.0;
+        cartbodyRef.current.applyTorqueImpulse(
+          {
+            x: rotationAxis.x * rotationAngle * recoveryStrength * delta,
+            y: rotationAxis.y * rotationAngle * recoveryStrength * delta,
+            z: rotationAxis.z * rotationAngle * recoveryStrength * delta,
+          },
+          true
+        );
+      }
+    }
+  };
+
+  // 10. 각속도 제한
+  const limitAngularVelocity = () => {
+    if (!cartbodyRef.current) return;
+
+    const angvel = cartbodyRef.current.angvel();
+    const maxAngvel = 5.0;
+    const maxPitchAngvel = 10.0;
+    cartbodyRef.current.setAngvel(
+      {
+        x: Math.max(-maxPitchAngvel, Math.min(maxPitchAngvel, angvel.x)),
+        y: Math.max(-maxAngvel, Math.min(maxAngvel, angvel.y)),
+        z: Math.max(-maxAngvel, Math.min(maxAngvel, angvel.z)),
+      },
+      true
+    );
+  };
+
+  // 11. 상태 패널 업데이트
+  const updateDisplayPanel = () => {
+    if (!cartbodyRef.current) return;
+
+    const vel = cartbodyRef.current.linvel();
+    const speed = Math.sqrt(vel.x ** 2 + vel.z ** 2);
+    setDisplaySpeed(Math.round(speed * 10) / 10);
+    setDisplayCollision(objectHit.current);
+  };
+
   // 초기 몇 프레임 동안 카트바디 위치 강제 고정 (들썩거림 방지)
   useFrame((state, delta) => {
     if (initFrameCount.current < 10 && cartbodyRef.current) {
@@ -87,149 +647,7 @@ const Car = forwardRef<CarHandle, CarProps>(function Car(
 
     if (!cartbodyRef.current) return;
 
-    // 1. 충돌 기반 호버보드 로직
-    // 어떤 물체와든 충돌 중일 때만 바닥 밀어내기 힘 적용
-    // 점프 중일 때는 호버보드 로직 비활성화 (점프 쿨다운 중이면 비활성화)
-    if (
-      objectHit.current &&
-      groundContactPoint.current &&
-      jumpCooldown.current <= 0
-    ) {
-      const currentPos = cartbodyRef.current.translation();
-      const targetY = groundContactPoint.current.y + GROUND_OFFSET;
-      const heightDiff = targetY - currentPos.y;
-
-      // 차량이 목표 높이보다 아래에 있거나, 목표 높이 근처에 있을 때 힘 적용 (통통거림 방지)
-      if (heightDiff > -0.05) {
-        // 높이 차이에 한계를 둠
-        const clampedHeightDiff = Math.min(
-          Math.max(heightDiff, 0),
-          MAX_HEIGHT_DIFF
-        );
-
-        // heightDiff에 비례한 힘 적용 (최소 힘 유지)
-        const forceStrength = Math.max(
-          clampedHeightDiff * delta * 200, // 힘 강도 증가
-          2.0 * delta // 최소 힘 유지 (통통거림 방지)
-        );
-
-        // MAX_HEIGHT 제한 확인
-        if (MAX_HEIGHT === Infinity || currentPos.y < MAX_HEIGHT) {
-          // 경사면 법선 방향으로 힘 적용 (경사면을 따라 올라가기)
-          const normalLength = Math.sqrt(
-            groundNormal.current.x ** 2 +
-              groundNormal.current.y ** 2 +
-              groundNormal.current.z ** 2
-          );
-
-          if (normalLength > 0.01) {
-            // 법선 벡터 정규화
-            const normalizedNormal = {
-              x: groundNormal.current.x / normalLength,
-              y: groundNormal.current.y / normalLength,
-              z: groundNormal.current.z / normalLength,
-            };
-
-            const impulse = new Vector3(
-              normalizedNormal.x * forceStrength,
-              normalizedNormal.y * forceStrength,
-              normalizedNormal.z * forceStrength
-            );
-            cartbodyRef.current.applyImpulse(impulse, true);
-          } else {
-            // 법선이 유효하지 않으면 수직 방향으로 힘 적용
-            const impulse = new Vector3(0, forceStrength, 0);
-            cartbodyRef.current.applyImpulse(impulse, true);
-          }
-        }
-      }
-
-      // 속도 제어: 위로 올라가는 속도가 너무 크면 제한 (통통거림 방지)
-      // 단, 점프 중이 아닐 때만 제한 (점프 쿨다운 중이면 제한하지 않음)
-      const linvel = cartbodyRef.current.linvel();
-      if (linvel.y > 3.0) {
-        cartbodyRef.current.setLinvel(
-          { x: linvel.x, y: 3.0, z: linvel.z },
-          true
-        );
-      }
-    }
-
-    // 3. 입력 처리
-    if (keyQueue?.current) {
-      const keys = keyQueue.current;
-
-      // 공중에 떠 있으면 앞뒤 조작 불가
-      if (!objectHit.current) {
-        // 공중에서는 속도만 감소 (입력 무시)
-        targetSpeed.current *= 0.9;
-      } else {
-        // 바닥에 닿아 있을 때만 앞뒤 입력 처리
-        if (keys["i"] || keys["I"]) {
-          targetSpeed.current = 10.0;
-        } else if (keys["k"] || keys["K"]) {
-          targetSpeed.current = -5.0;
-        } else {
-          targetSpeed.current *= 0.9;
-        }
-      }
-
-      // 조향 입력
-      const isSteeringLeft = keys["j"] || keys["J"];
-      const isSteeringRight = keys["l"] || keys["L"];
-
-      if (isSteeringLeft) {
-        steerAngle.current += 3.0 * delta;
-      } else if (isSteeringRight) {
-        steerAngle.current -= 3.0 * delta;
-      } else {
-        // 버튼을 누르고 있지 않을 때는 즉시 0으로 복귀
-        steerAngle.current = 0;
-      }
-
-      // 점프 입력 (스페이스바)
-      const isJumpPressed = keys[" "] || keys["Space"];
-
-      // 점프 쿨다운 감소
-      if (jumpCooldown.current > 0) {
-        jumpCooldown.current -= delta;
-      } else {
-        canJump.current = true;
-      }
-
-      // 점프 처리: 바닥에 닿아있고, 점프 가능하고, 점프 키를 눌렀을 때
-      if (
-        isJumpPressed &&
-        objectHit.current &&
-        canJump.current &&
-        jumpCooldown.current <= 0
-      ) {
-        const JUMP_FORCE = 5.0; // 점프 힘 증가
-        const currentVel = cartbodyRef.current.linvel();
-
-        // 위로 향하는 힘을 impulse로 적용 (더 강력한 점프)
-        cartbodyRef.current.applyImpulse(
-          {
-            x: 0,
-            y: JUMP_FORCE, // 위로 향하는 힘
-            z: 0,
-          },
-          true
-        );
-
-        // 점프 쿨다운 설정 (0.5초)
-        jumpCooldown.current = 0.5;
-        canJump.current = false;
-      }
-    }
-
-    const MAX_STEER = Math.PI / 4;
-    steerAngle.current = Math.max(
-      -MAX_STEER,
-      Math.min(MAX_STEER, steerAngle.current)
-    );
-
-    // 4. 현재 회전 가져오기
+    // 현재 회전 가져오기
     const currentRot = cartbodyRef.current.rotation();
     const currentQuat = new Quaternion(
       currentRot.x,
@@ -238,332 +656,22 @@ const Car = forwardRef<CarHandle, CarProps>(function Car(
       currentRot.w
     );
 
-    // 5. 이동 방향 계산 (차량의 실제 회전 방향 사용)
+    // 이동 방향 계산
     const forward = new Vector3(0, 0, -1);
     forward.applyQuaternion(currentQuat);
 
-    // 5-0. 직진/후진 중 갑작스런 반대 방향 입력 시 축적 에너지를 즉시 반대 방향으로 전환
-    if (objectHit.current && cartbodyRef.current) {
-      const wasMovingForward = prevTargetSpeed.current > 0.1; // 이전 프레임에서 전진 중
-      const wasMovingBackward = prevTargetSpeed.current < -0.1; // 이전 프레임에서 후진 중
-      const isReversing = targetSpeed.current < -0.1; // 지금 후진 입력
-      const isForwarding = targetSpeed.current > 0.1; // 지금 전진 입력
-
-      // 현재 실제 속도 가져오기
-      const vel = cartbodyRef.current.linvel();
-
-      // 전진 방향 성분 계산
-      const speedForward = vel.x * forward.x + vel.z * forward.z;
-
-      // 전진 중 후진 입력 시
-      if (wasMovingForward && isReversing && speedForward > 1.0) {
-        // 전진 속도를 반대 방향으로 즉시 전환 (약간 감쇠 적용)
-        const reverseSpeed = -speedForward * 0.3;
-
-        const newVel = {
-          x: vel.x - forward.x * speedForward + forward.x * reverseSpeed,
-          y: vel.y, // 수직 속도는 유지
-          z: vel.z - forward.z * speedForward + forward.z * reverseSpeed,
-        };
-
-        cartbodyRef.current.setLinvel(newVel, true);
-      }
-
-      // 후진 중 전진 입력 시
-      if (wasMovingBackward && isForwarding && speedForward < -1.0) {
-        // 후진 속도를 반대 방향으로 즉시 전환 (약간 감쇠 적용)
-        const forwardSpeed = -speedForward * 0.5; // speedForward가 음수이므로 -를 붙여서 양수로
-
-        const newVel = {
-          x: vel.x - forward.x * speedForward + forward.x * forwardSpeed,
-          y: vel.y, // 수직 속도는 유지
-          z: vel.z - forward.z * speedForward + forward.z * forwardSpeed,
-        };
-
-        cartbodyRef.current.setLinvel(newVel, true);
-      }
-    }
-
-    // 이전 targetSpeed 저장 (다음 프레임에서 사용)
-    prevTargetSpeed.current = targetSpeed.current;
-
-    // 5-1. 횡방향(옆으로) 미끄러짐 감쇠
-    if (objectHit.current && groundNormal.current.y > 0.9) {
-      const vel = cartbodyRef.current.linvel();
-
-      // 전/후 방향 성분
-      const speedForward = vel.x * forward.x + vel.z * forward.z;
-      const velForward = {
-        x: forward.x * speedForward,
-        y: 0,
-        z: forward.z * speedForward,
-      };
-
-      // 횡방향 성분 (전체 - 전후)
-      const velSide = {
-        x: vel.x - velForward.x,
-        y: 0,
-        z: vel.z - velForward.z,
-      };
-
-      // 조향 중인지 확인
-      const isSteeringActive =
-        keyQueue?.current &&
-        (keyQueue.current["j"] ||
-          keyQueue.current["J"] ||
-          keyQueue.current["l"] ||
-          keyQueue.current["L"]);
-
-      // 조향 중일 때는 횡방향 감쇠를 약하게 (부드러운 방향 전환)
-      // 조향 중이 아닐 때는 강하게 (옆 미끄러짐 방지)
-      const baseSideFriction = 0.2;
-      const sideFriction = isSteeringActive
-        ? 0.6 // 조향 중: 60% 유지 (부드러운 회전)
-        : baseSideFriction; // 조향 안 할 때: 20% 유지 (옆 미끄러짐 방지)
-
-      const newVel = {
-        x: velForward.x + velSide.x * sideFriction,
-        y: vel.y, // 수직 속도는 그대로 유지 (점프/중력)
-        z: velForward.z + velSide.z * sideFriction,
-      };
-
-      cartbodyRef.current.setLinvel(newVel, true);
-    }
-
-    // 6. 이동 힘 적용
-    const moveForce = new Vector3(
-      forward.x * targetSpeed.current * 2.0, // 200.0 -> 2.0 (1/100)
-      0,
-      forward.z * targetSpeed.current * 2.0 // 200.0 -> 2.0 (1/100)
-    );
-
-    // 6-0. 스텝 스냅: 앞에 있는 낮은 단(계단 윗면)으로 Y 위치를 살짝 끌어올리기
-    if (
-      targetSpeed.current > 0 &&
-      objectHit.current &&
-      groundContactPoint.current
-    ) {
-      const currentPos = cartbodyRef.current.translation();
-
-      // 차 앞쪽, 약간 위에서 아래로 레이캐스트
-      const frontPos = {
-        x: currentPos.x + forward.x * 0.6,
-        y: currentPos.y + 0.01,
-        z: currentPos.z + forward.z * 0.6,
-      };
-      const downDir = { x: 0.0, y: -1.0, z: 0.0 };
-
-      const stepRay = new Ray(frontPos, downDir);
-      const stepHit = world.castRay(stepRay, 1.0, true);
-
-      if (stepHit) {
-        const hitY = frontPos.y + downDir.y * stepHit.timeOfImpact;
-
-        const currentGroundY = groundContactPoint.current.y;
-        const stepHeight = hitY - currentGroundY;
-        const MAX_STEP_HEIGHT = 0.1; // 한 번에 최대 0.1m까지만 끌어올리기
-
-        if (stepHeight > 0 && stepHeight < MAX_STEP_HEIGHT) {
-          const linvel = cartbodyRef.current.linvel();
-
-          // 계단 윗면으로 Y 위치 스냅 (0.1m 이내의 작은 턱만 처리)
-          cartbodyRef.current.setTranslation(
-            {
-              x: currentPos.x,
-              y: hitY + GROUND_OFFSET,
-              z: currentPos.z,
-            },
-            true
-          );
-
-          // 세로 속도는 0으로 정리 (튀는 것 방지)
-          cartbodyRef.current.setLinvel(
-            { x: linvel.x, y: 0, z: linvel.z },
-            true
-          );
-        }
-      }
-    }
-
-    cartbodyRef.current.applyImpulse(
-      {
-        x: moveForce.x * delta,
-        y: moveForce.y * delta,
-        z: moveForce.z * delta,
-      },
-      true
-    );
-
-    // 7. 조향 회전 토크 (버튼을 누르고 있을 때만 회전)
-    // 현재 실제 속도 계산
-    const currentVel = cartbodyRef.current.linvel();
-    const currentSpeed = Math.sqrt(currentVel.x ** 2 + currentVel.z ** 2);
-
-    // 전진/후진 방향 확인
-    // 차량의 전방 방향과 속도 벡터의 내적을 통해 전진/후진 판단
-    const carForward = new Vector3(0, 0, -1);
-    carForward.applyQuaternion(currentQuat);
-    const velocityDir =
-      currentSpeed > 0.1
-        ? new Vector3(
-            currentVel.x / currentSpeed,
-            0,
-            currentVel.z / currentSpeed
-          )
-        : carForward;
-    const isReversing = carForward.dot(velocityDir) < 0; // 내적이 음수면 후진
-
-    // 조향 입력이 활성화되어 있을 때만 회전 토크 적용
-    const isSteeringActive =
-      keyQueue?.current &&
-      (keyQueue.current["j"] ||
-        keyQueue.current["J"] ||
-        keyQueue.current["l"] ||
-        keyQueue.current["L"]);
-
-    // 조향 키에서 손을 떼면 Y축 각속도를 0으로 설정 (회전 즉시 정지)
-    if (!isSteeringActive) {
-      const angvel = cartbodyRef.current.angvel();
-      cartbodyRef.current.setAngvel(
-        {
-          x: angvel.x,
-          y: 0, // Y축 각속도 즉시 정지
-          z: angvel.z,
-        },
-        true
-      );
-    }
-
-    if (isSteeringActive && Math.abs(steerAngle.current) > 0.01) {
-      if (currentSpeed > 0.1) {
-        // 달리는 동안: 속도에 비례한 회전
-        const speedFactor = Math.max(currentSpeed / 10.0, 0.3);
-        let torqueStrength = steerAngle.current * speedFactor * 2.0;
-
-        // 속도가 느릴수록 조향 토크를 강하게 (빠릿빠릿한 방향 전환)
-        // 속도가 빠를수록 조향 토크를 완화 (급격한 회전 방지)
-        const speedDamping = Math.min(1.0, 5.0 / currentSpeed); // 속도가 빠를수록 토크 감소
-        const speedBoost = Math.max(1.0, 3.0 / currentSpeed); // 속도가 느릴수록 토크 증가
-        torqueStrength *= speedDamping * speedBoost;
-
-        // 최대 토크 제한 (너무 급격한 회전 방지)
-        // 속도가 느릴 때는 더 큰 토크 허용 (빠릿빠릿한 전환)
-        const maxTorque = currentSpeed < 3.0 ? 5.0 : 3.0; // 느릴 때 5.0, 빠를 때 3.0
-        torqueStrength = Math.max(
-          -maxTorque,
-          Math.min(maxTorque, torqueStrength)
-        );
-
-        // 후진 중일 때는 조향 방향 반대
-        if (isReversing) {
-          torqueStrength = -torqueStrength;
-        }
-
-        cartbodyRef.current.applyTorqueImpulse(
-          {
-            x: 0,
-            y: torqueStrength * delta,
-            z: 0,
-          },
-          true
-        );
-      } else {
-        // 정지 상태에서도 약간의 회전 가능 (제자리 회전)
-        // 후진 입력 중일 때는 반대 방향으로 회전
-        let torqueStrength = steerAngle.current * 0.5;
-        if (targetSpeed.current < 0) {
-          torqueStrength = -torqueStrength;
-        }
-
-        cartbodyRef.current.applyTorqueImpulse(
-          {
-            x: 0,
-            y: torqueStrength * delta,
-            z: 0,
-          },
-          true
-        );
-      }
-    }
-
-    // 8. 경사면에 맞춰 회전 (충돌 중일 때만)
-    if (objectHit.current && groundNormal.current.y < 0.99) {
-      const up = new Vector3(0, 1, 0);
-      const targetUp = new Vector3(
-        groundNormal.current.x,
-        groundNormal.current.y,
-        groundNormal.current.z
-      );
-      const rotationAxis = new Vector3().crossVectors(up, targetUp).normalize();
-      const rotationAngle = Math.acos(
-        Math.max(-1, Math.min(1, up.dot(targetUp)))
-      );
-
-      if (rotationAngle > 0.01) {
-        cartbodyRef.current.applyTorqueImpulse(
-          {
-            x: rotationAxis.x * rotationAngle * 0.5 * delta, // 50.0 -> 0.5 (1/100)
-            y: rotationAxis.y * rotationAngle * 0.5 * delta, // 50.0 -> 0.5 (1/100)
-            z: rotationAxis.z * rotationAngle * 0.5 * delta, // 50.0 -> 0.5 (1/100)
-          },
-          true
-        );
-      }
-    }
-
-    // 8-1. 뒤집힘 감지 및 자동 복구 (오브젝트에 닿은 상태일 때만)
-    if (objectHit.current) {
-      // 차량의 위쪽 방향 계산
-      const carUp = new Vector3(0, 1, 0);
-      carUp.applyQuaternion(currentQuat);
-
-      // 위쪽 방향이 아래를 향하는 정도 확인 (뒤집힘 각도)
-      // carUp.y가 -1에 가까울수록 완전히 뒤집힌 상태
-      // carUp.y가 0에 가까우면 90도 뒤집힌 상태
-      const upsideDownThreshold = 0.1; // 0.1 이하면 "어느 정도 뒤집힌" 것으로 판단 (90도 포함)
-
-      if (carUp.y < upsideDownThreshold) {
-        // 목표: 수직 방향 (Y축 위로)
-        const targetUp = new Vector3(0, 1, 0);
-
-        // 현재 위쪽 방향과 목표 위쪽 방향의 차이로 회전 축 계산
-        const rotationAxis = new Vector3().crossVectors(carUp, targetUp);
-
-        // 회전 각도 계산
-        const rotationAngle = Math.acos(
-          Math.max(-1, Math.min(1, carUp.dot(targetUp)))
-        );
-
-        // 회전 축이 유효하고 각도가 충분히 클 때만 복구 토크 적용
-        if (rotationAngle > 0.01 && rotationAxis.length() > 0.01) {
-          rotationAxis.normalize();
-
-          // 뒤집힘 복구 토크 (강하게 적용)
-          const recoveryStrength = 5.0; // 복구 강도
-          cartbodyRef.current.applyTorqueImpulse(
-            {
-              x: rotationAxis.x * rotationAngle * recoveryStrength * delta,
-              y: rotationAxis.y * rotationAngle * recoveryStrength * delta,
-              z: rotationAxis.z * rotationAngle * recoveryStrength * delta,
-            },
-            true
-          );
-        }
-      }
-    }
-
-    // 9. 각속도 제한 (X축은 기울기 제어를 위해 제한 완화)
-    const angvel = cartbodyRef.current.angvel();
-    const maxAngvel = 5.0;
-    const maxPitchAngvel = 10.0; // X축 각속도는 더 큰 값 허용 (기울기 제어용)
-    cartbodyRef.current.setAngvel(
-      {
-        x: Math.max(-maxPitchAngvel, Math.min(maxPitchAngvel, angvel.x)), // X축은 더 큰 값 허용
-        y: Math.max(-maxAngvel, Math.min(maxAngvel, angvel.y)),
-        z: Math.max(-maxAngvel, Math.min(maxAngvel, angvel.z)),
-      },
-      true
-    );
+    // 물리 로직 실행 순서
+    handleHoverboardLogic(delta);
+    handleInput(delta);
+    handleDirectionReversal(forward);
+    handleSideFriction(forward);
+    handleMoveForce(forward, delta);
+    handleStepSnap(forward);
+    handleSteeringTorque(currentQuat, delta);
+    handleSlopeAlignment(delta);
+    handleUpsideDownRecovery(currentQuat, delta);
+    limitAngularVelocity();
+    updateDisplayPanel();
   });
 
   const handle = () => ({
@@ -574,60 +682,150 @@ const Car = forwardRef<CarHandle, CarProps>(function Car(
   useImperativeHandle(ref, handle, []);
 
   return (
-    <RigidBody
-      position={position}
-      ref={cartbodyRef}
-      type="dynamic"
-      canSleep={false}
-      restitution={0.01}
-      linearDamping={0.3}
-      angularDamping={0.8}
-      onCollisionEnter={(event) => {
-        // 어떤 물체와든 접촉이 시작되면 contactCount 증가
-        contactCount.current += 1;
-        objectHit.current = true; // 어디든 닿고 있으면 true
+    <>
+      <RigidBody
+        position={position}
+        ref={cartbodyRef}
+        type="dynamic"
+        canSleep={false}
+        restitution={0.01}
+        linearDamping={0.3}
+        angularDamping={0.8}
+        onCollisionEnter={(event) => {
+          // 어떤 물체와든 접촉이 시작되면 contactCount 증가
+          contactCount.current += 1;
+          objectHit.current = true; // 어디든 닿고 있으면 true
 
-        // 충돌 지점의 법선 벡터 가져오기
-        if (event.manifold) {
-          const normal = event.manifold.normal();
-          if (normal) {
-            groundNormal.current = {
-              x: normal.x,
-              y: normal.y,
-              z: normal.z,
-            };
+          // 충돌 지점의 법선 벡터 가져오기
+          if (event.manifold) {
+            const normal = event.manifold.normal();
+            if (normal) {
+              groundNormal.current = {
+                x: normal.x,
+                y: normal.y,
+                z: normal.z,
+              };
+
+              // 바닥인지 판단하고 바닥 충돌 카운트 관리
+              if (normal.y > 0.7) {
+                // 바닥 충돌
+                groundContactCount.current += 1;
+              }
+
+              // 모든 충돌에 대해 contact point 설정 (호버보드 로직용)
+              if (cartbodyRef.current) {
+                const currentPos = cartbodyRef.current.translation();
+                if (normal.y > 0.7) {
+                  // 바닥 충돌: 차량 하단 기준
+                  groundContactPoint.current = {
+                    x: currentPos.x,
+                    y: currentPos.y - 0.25, // 차량 하단
+                    z: currentPos.z,
+                  };
+                } else {
+                  // 벽 충돌: 현재 위치 기준 (수직 방향 힘만 적용)
+                  groundContactPoint.current = {
+                    x: currentPos.x,
+                    y: currentPos.y, // 현재 위치
+                    z: currentPos.z,
+                  };
+                }
+              }
+            }
           }
-        }
+        }}
+        onCollisionExit={(event) => {
+          // 접촉이 끝날 때마다 contactCount 감소
+          contactCount.current = Math.max(0, contactCount.current - 1);
 
-        // 충돌 지점 저장 (차량의 현재 위치 기준으로 계산)
-        // manifold에서 contact를 직접 가져올 수 없으므로 차량 위치 사용
-        if (cartbodyRef.current) {
-          const currentPos = cartbodyRef.current.translation();
-          // 차량 하단 위치를 contact point로 사용
-          groundContactPoint.current = {
-            x: currentPos.x,
-            y: currentPos.y - 0.25, // 차량 하단
-            z: currentPos.z,
-          };
-        }
-      }}
-      onCollisionExit={(event) => {
-        // 접촉이 끝날 때마다 contactCount 감소
-        contactCount.current = Math.max(0, contactCount.current - 1);
+          // 벗어난 충돌이 바닥인지 확인 (groundNormal으로 판단)
+          if (groundNormal.current.y > 0.7) {
+            groundContactCount.current = Math.max(
+              0,
+              groundContactCount.current - 1
+            );
+          }
 
-        // 더 이상 어떤 물체와도 닿아있지 않을 때만 false로 전환
-        if (contactCount.current === 0) {
-          objectHit.current = false;
-          groundContactPoint.current = null;
-        }
-      }}
-    >
-      <primitive object={followTarget} />
-      <mesh castShadow>
-        <boxGeometry args={[1, 0.5, 2]} />
-        <meshStandardMaterial color="red" />
-      </mesh>
-    </RigidBody>
+          // 더 이상 어떤 물체와도 닿아있지 않을 때만 false로 전환
+          if (contactCount.current === 0) {
+            objectHit.current = false;
+            groundContactPoint.current = null;
+            groundNormal.current = { x: 0, y: 1, z: 0 }; // groundNormal 초기화
+            groundContactCount.current = 0;
+          } else if (groundContactCount.current === 0) {
+            // 바닥 충돌이 없으면 groundContactPoint 초기화
+            groundContactPoint.current = null;
+            // 벽 충돌만 남아있으면 groundNormal도 초기화
+            if (groundNormal.current.y < 0.7) {
+              groundNormal.current = { x: 0, y: 1, z: 0 };
+            }
+          }
+        }}
+      >
+        <primitive object={followTarget} />
+        <mesh castShadow>
+          <boxGeometry args={[1, 0.5, 2]} />
+          <meshStandardMaterial color="red" />
+        </mesh>
+
+        {/* 차량 상태 패널 (차량 뒤쪽) */}
+        <Html
+          position={[0, 0, 1.5]} // 차량 뒤쪽, 차량과 같은 높이
+          center
+          distanceFactor={5}
+          style={{
+            transition: "all 0.2s",
+            pointerEvents: "none",
+            userSelect: "none",
+          }}
+        >
+          <div
+            style={{
+              background: "rgba(0, 0, 0, 0.8)",
+              color: "white",
+              padding: "12px 20px",
+              borderRadius: "8px",
+              fontFamily: "monospace",
+              fontSize: "14px",
+              border: "2px solid rgba(255, 255, 255, 0.3)",
+              boxShadow: "0 4px 6px rgba(0, 0, 0, 0.5)",
+              minWidth: "150px",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: "8px",
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between" }}>
+                <span style={{ color: "#888" }}>속도:</span>
+                <span
+                  style={{
+                    fontWeight: "bold",
+                    color: displaySpeed > 5 ? "#ff6b6b" : "#4ecdc4",
+                  }}
+                >
+                  {displaySpeed.toFixed(1)} m/s
+                </span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between" }}>
+                <span style={{ color: "#888" }}>충돌:</span>
+                <span
+                  style={{
+                    fontWeight: "bold",
+                    color: displayCollision ? "#ffd93d" : "#95e1d3",
+                  }}
+                >
+                  {displayCollision ? "접촉 중" : "공중"}
+                </span>
+              </div>
+            </div>
+          </div>
+        </Html>
+      </RigidBody>
+    </>
   );
 });
 

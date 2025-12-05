@@ -77,7 +77,19 @@ function Scene() {
   }, []);
 
   useFrame((state, delta) => {
-    // 차량 입력 처리는 나중에 직접 제어 방식으로 구현 예정
+    // R 키를 누르면 차량 위치/회전/속도를 초기화
+    if (keyQueue.current["r"] || keyQueue.current["R"]) {
+      const rigidBody = carRef.current?.rigidBodyRef.current;
+      if (rigidBody) {
+        // 초기 위치 (Car에 넘긴 position과 동일하게 맞춰야 함)
+        const resetPosition = { x: 0, y: 0, z: 0 };
+
+        rigidBody.setTranslation(resetPosition, true);
+        rigidBody.setLinvel({ x: 0, y: 0, z: 0 }, true);
+        rigidBody.setAngvel({ x: 0, y: 0, z: 0 }, true);
+        rigidBody.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
+      }
+    }
 
     // HTML 코드: Follow cam 업데이트
     // this.followTarget.getWorldPosition(this.v)
@@ -113,7 +125,7 @@ function Scene() {
       while (deltaYaw < -Math.PI) deltaYaw += Math.PI * 2;
 
       // 부드럽게 회전 (회전 속도 계수는 필요에 따라 조절)
-      const followSpeed = 5;
+      const followSpeed = 10;
       yawRotation.current += deltaYaw * followSpeed * delta;
     }
 
