@@ -98,9 +98,16 @@ const Car = forwardRef<CarHandle, CarProps>(function Car(
     null
   );
 
+  // 드리프트 게이지 계산용
+  const driftStartTime = useRef<number | null>(null); // 드리프트 시작 시간
+  const prevSpeed = useRef(0); // 이전 프레임의 속도 (가속도 계산용)
+  const driftGaugeValue = useRef(0); // 드리프트 게이지 누적 값
+
   // 상태 패널용 상태 관리
   const [displaySpeed, setDisplaySpeed] = useState(0);
   const [displayCollision, setDisplayCollision] = useState(false);
+  const [displayDriftMode, setDisplayDriftMode] = useState(false);
+  const [driftGauge, setDriftGauge] = useState(0); // 드리프트 게이지 (0-100)
 
   // 호버보드 설정
   const GROUND_OFFSET = 0.05; // 바닥에서의 오프셋 (최소 0.2 높이)
@@ -225,9 +232,14 @@ const Car = forwardRef<CarHandle, CarProps>(function Car(
     const isSteeringLeft = keys["j"] || keys["J"];
     const isSteeringRight = keys["l"] || keys["L"];
 
-    steerAngle.current = 0;
-    if (isSteeringLeft) steerAngle.current += 3.0 * delta;
-    else if (isSteeringRight) steerAngle.current -= 3.0 * delta;
+    if (isSteeringLeft) {
+      steerAngle.current += 3.0 * delta;
+    } else if (isSteeringRight) {
+      steerAngle.current -= 3.0 * delta;
+    } else {
+      // 조향 키를 누르지 않으면 0으로 복귀
+      steerAngle.current = 0;
+    }
 
     // 점프 입력 처리
     const isJumpPressed = keys[" "] || keys["Space"];
@@ -295,10 +307,11 @@ const Car = forwardRef<CarHandle, CarProps>(function Car(
   };
 
   // 4. 횡방향 마찰 처리
+  // 경사면에서는 Y 성분 손실을 방지하기 위해 평평한 바닥에서만 작동
   const handleSideFriction = (forward: Vector3) => {
     if (
       !objectHit.current ||
-      groundNormal.current.y <= 0.9 ||
+      groundNormal.current.y < 0.95 || // 평평한 바닥에서만 작동 (경사면 제외)
       !cartbodyRef.current
     ) {
       return;
@@ -428,7 +441,20 @@ const Car = forwardRef<CarHandle, CarProps>(function Car(
           },
           true
         );
-        cartbodyRef.current.setLinvel({ x: linvel.x, y: 0, z: linvel.z }, true);
+        // 경사면에서는 Y 속도를 보존 (평평한 바닥에서만 Y 속도를 0으로)
+        if (groundNormal.current.y > 0.95) {
+          // 평평한 바닥: Y 속도를 0으로 설정
+          cartbodyRef.current.setLinvel(
+            { x: linvel.x, y: 0, z: linvel.z },
+            true
+          );
+        } else {
+          // 경사면: Y 속도 보존 (경사면을 올라가는 속도 유지)
+          cartbodyRef.current.setLinvel(
+            { x: linvel.x, y: linvel.y, z: linvel.z },
+            true
+          );
+        }
       }
     }
   };
@@ -622,13 +648,49 @@ const Car = forwardRef<CarHandle, CarProps>(function Car(
   };
 
   // 11. 상태 패널 업데이트
-  const updateDisplayPanel = () => {
+  const updateDisplayPanel = (delta: number) => {
     if (!cartbodyRef.current) return;
 
     const vel = cartbodyRef.current.linvel();
     const speed = Math.sqrt(vel.x ** 2 + vel.z ** 2);
     setDisplaySpeed(Math.round(speed * 10) / 10);
     setDisplayCollision(objectHit.current);
+
+    // 드리프트 모드 확인
+    const isDriftActive =
+      objectHit.current &&
+      speed > CAR_TUNING.DRIFT.SPEED_THRESHOLD &&
+      keyQueue?.current &&
+      (keyQueue.current["D"] || keyQueue.current["d"])
+        ? true
+        : false;
+    setDisplayDriftMode(isDriftActive);
+
+    // 드리프트 게이지 계산: 속도²에 비례 (누적)
+    if (isDriftActive && cartbodyRef.current) {
+      // 속도 제곱 계산
+      const speedSquared = speed * speed;
+
+      // 게이지 증가량 = 속도² × delta × 스케일
+      // 속도의 제곱에 비례하여 게이지 증가
+      const gaugeIncrease = speedSquared * delta * 0.1; // 스케일링 팩터 0.1
+
+      // 게이지 누적
+      driftGaugeValue.current += gaugeIncrease;
+
+      // 0-100 범위로 제한
+      driftGaugeValue.current = Math.min(
+        100,
+        Math.max(0, driftGaugeValue.current)
+      );
+      setDriftGauge(driftGaugeValue.current);
+    } else {
+      // 드리프트 모드가 아니면 게이지 유지 (감소하지 않음)
+      driftStartTime.current = null;
+      prevSpeed.current = speed;
+      // 게이지는 그대로 유지
+      setDriftGauge(driftGaugeValue.current);
+    }
   };
 
   // 초기 몇 프레임 동안 카트바디 위치 강제 고정 (들썩거림 방지)
@@ -671,7 +733,7 @@ const Car = forwardRef<CarHandle, CarProps>(function Car(
     handleSlopeAlignment(delta);
     handleUpsideDownRecovery(currentQuat, delta);
     limitAngularVelocity();
-    updateDisplayPanel();
+    updateDisplayPanel(delta);
   });
 
   const handle = () => ({
@@ -800,7 +862,7 @@ const Car = forwardRef<CarHandle, CarProps>(function Car(
               }}
             >
               <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <span style={{ color: "#888" }}>속도:</span>
+                <span style={{ color: "#888" }}>Speed:</span>
                 <span
                   style={{
                     fontWeight: "bold",
@@ -811,16 +873,54 @@ const Car = forwardRef<CarHandle, CarProps>(function Car(
                 </span>
               </div>
               <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <span style={{ color: "#888" }}>충돌:</span>
+                <span style={{ color: "#888" }}>Collusion:</span>
                 <span
                   style={{
                     fontWeight: "bold",
                     color: displayCollision ? "#ffd93d" : "#95e1d3",
                   }}
                 >
-                  {displayCollision ? "접촉 중" : "공중"}
+                  {displayCollision ? "Touching" : "Air"}
                 </span>
               </div>
+              {/* 드리프트 모드 표시 */}
+              <div style={{ display: "flex", justifyContent: "space-between" }}>
+                <span style={{ color: "#888" }}>Drift:</span>
+                <span
+                  style={{
+                    fontWeight: "bold",
+                    color: displayDriftMode ? "#ffd93d" : "#95e1d3",
+                  }}
+                >
+                  {displayDriftMode ? "Drift" : "Normal"}
+                </span>
+              </div>
+              {/* 드리프트 게이지 */}
+            </div>
+            <div
+              style={{
+                width: "100%",
+                height: "8px",
+                background: "rgba(255, 255, 255, 0.1)",
+                borderRadius: "4px",
+                overflow: "hidden",
+                border: "1px solid rgba(255, 255, 255, 0.2)",
+              }}
+            >
+              <div
+                style={{
+                  width: `${driftGauge}%`,
+                  height: "100%",
+                  background:
+                    driftGauge > 70
+                      ? "linear-gradient(90deg, #ff6b6b, #ffd93d)"
+                      : driftGauge > 40
+                      ? "linear-gradient(90deg, #ffd93d, #ffed4e)"
+                      : "linear-gradient(90deg, #95e1d3, #4ecdc4)",
+                  transition: "width 0.1s ease-out, background 0.1s ease-out",
+                  borderRadius: "4px",
+                }}
+              />
             </div>
           </div>
         </Html>

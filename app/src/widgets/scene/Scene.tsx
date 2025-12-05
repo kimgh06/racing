@@ -1,14 +1,31 @@
 import { useFrame, useThree } from "@react-three/fiber";
-import {
-  CuboidCollider,
-  RigidBody,
-  RapierRigidBody,
-  ConvexHullCollider,
-} from "@react-three/rapier";
+import { CuboidCollider, RigidBody } from "@react-three/rapier";
 import Car, { CarHandle } from "~/src/entities/car";
 import { useEffect, useRef, useState, useMemo } from "react";
 import { Vector3, Quaternion, Euler, GridHelper, Object3D } from "three";
 import { Box } from "@react-three/drei";
+
+// ===============================
+// 카메라 설정 상수
+// ===============================
+const CAMERA_CONFIG = {
+  DISTANCE: {
+    DEFAULT: 3.1, // 기본 카메라 거리
+    MIN: 0.3, // 최소 거리 (마우스 휠)
+    MAX: 4, // 최대 거리 (마우스 휠)
+  },
+  ROTATION: {
+    PITCH: -0.3, // 카메라 기울기 고정값 (약간 아래를 보도록)
+    MOUSE_SENSITIVITY: 0.002, // 마우스 이동 감도
+  },
+  WHEEL: {
+    SENSITIVITY: 0.005, // 마우스 휠 스크롤 감도
+  },
+  FOLLOW: {
+    POSITION_SPEED: 20, // 카메라 위치 따라가기 속도
+    ROTATION_SPEED: 15, // 카메라 회전 따라가기 속도
+  },
+} as const;
 
 function Scene() {
   const { camera } = useThree();
@@ -25,18 +42,18 @@ function Scene() {
     pivot.add(yaw);
     yaw.add(pitch);
     pitch.add(camera);
-    camera.position.z = 4; // HTML 코드: camera.position.set(0, 0, 4)
+    camera.position.z = CAMERA_CONFIG.DISTANCE.DEFAULT;
   }, [pivot, yaw, pitch, camera]);
 
   // HTML 코드: Mouse controls
   const yawRotation = useRef(0);
-  const pitchRotation = useRef(-0.3); // 카메라 기울기 고정값 (약간 아래를 보도록)
-  const cameraDistance = useRef(4);
+  const pitchRotation = useRef(CAMERA_CONFIG.ROTATION.PITCH);
+  const cameraDistance = useRef<number>(CAMERA_CONFIG.DISTANCE.DEFAULT);
 
   const onDocumentMouseMove = (e: MouseEvent) => {
-    // HTML 코드: yaw.rotation.y -= e.movementX * 0.002
     if (e.buttons === 0) return;
-    yawRotation.current -= e.movementX * 0.002;
+    yawRotation.current -=
+      e.movementX * CAMERA_CONFIG.ROTATION.MOUSE_SENSITIVITY;
 
     // 카메라 기울기는 고정 (마우스로 변경 불가)
     // pitchRotation.current는 고정값 유지
@@ -44,10 +61,9 @@ function Scene() {
 
   const onDocumentMouseWheel = (e: WheelEvent) => {
     e.preventDefault();
-    // HTML 코드: const v = camera.position.z + e.deltaY * 0.005
-    const v = cameraDistance.current + e.deltaY * 0.005;
-    // HTML 코드: if (v >= 0.5 && v <= 5) { camera.position.z = v }
-    if (v >= 0.5 && v <= 5) {
+    const v =
+      cameraDistance.current + e.deltaY * CAMERA_CONFIG.WHEEL.SENSITIVITY;
+    if (v >= CAMERA_CONFIG.DISTANCE.MIN && v <= CAMERA_CONFIG.DISTANCE.MAX) {
       cameraDistance.current = v;
     }
   };
@@ -98,7 +114,7 @@ function Scene() {
       carRef.current.followTarget.getWorldPosition(v);
 
       // 카메라가 조금 느리게 카트를 따라가도록 lerp 속도 조정
-      pivot.position.lerp(v, delta * 15); // 조금 느리게 따라가기
+      pivot.position.lerp(v, delta * CAMERA_CONFIG.FOLLOW.POSITION_SPEED);
     }
 
     // 카트의 직진 방향에 따라 시점 고정
@@ -124,9 +140,9 @@ function Scene() {
       while (deltaYaw > Math.PI) deltaYaw -= Math.PI * 2;
       while (deltaYaw < -Math.PI) deltaYaw += Math.PI * 2;
 
-      // 부드럽게 회전 (회전 속도 계수는 필요에 따라 조절)
-      const followSpeed = 10;
-      yawRotation.current += deltaYaw * followSpeed * delta;
+      // 부드럽게 회전
+      yawRotation.current +=
+        deltaYaw * CAMERA_CONFIG.FOLLOW.ROTATION_SPEED * delta;
     }
 
     yaw.rotation.y = yawRotation.current;
@@ -136,28 +152,24 @@ function Scene() {
   });
   return (
     <>
-      <primitive object={pivot} />
-
+      <primitive object={pivot} /> {/* camera */}
       <Car ref={carRef} position={[0, 0, 0]} keyQueue={keyQueue} />
-
       <RigidBody>
         <Box position={[0, -1, 10]} />
       </RigidBody>
-
       {/* 일반 경사면 */}
       <RigidBody type={"fixed"}>
         <Box
           rotation={[Math.PI / 16, 0, 0]}
-          position={[0, 0, -10]}
+          position={[0, 0, -500]}
           args={[3, 0.1, 25]}
         />
       </RigidBody>
-
       {/* 바닥 */}
-      <gridHelper position={[0, -1.5, 0]} args={[200, 200]} />
+      <gridHelper position={[0, -1.5, 0]} args={[2000, 2000]} />
       <CuboidCollider
         position={[0, -2, 0]}
-        args={[100, 0.5, 100]}
+        args={[1000, 0.5, 1000]}
       ></CuboidCollider>
     </>
   );
