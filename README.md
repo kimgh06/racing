@@ -40,7 +40,7 @@ docker compose up --build -d
 
 완료 후 브라우저에서 다음 주소로 접속합니다.
 
-- `http://localhost:3000`
+- `http://localhost:2313`
 
 ### 2. 서비스 이름
 
@@ -54,7 +54,7 @@ services:
       dockerfile: Dockerfile
     container_name: falcare
     ports:
-      - "3000:3000"
+      - "2313:3000"
     environment:
       NODE_ENV: production
       PORT: 3000

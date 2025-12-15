@@ -10,5 +10,5 @@ services:
       NODE_ENV: production
       PORT: 3000
     ports:
-      - "3000:2313" # host:container
+      - "2313:3000" # host:container
     restart: unless-stopped
