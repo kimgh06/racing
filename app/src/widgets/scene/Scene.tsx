@@ -1,9 +1,9 @@
 import { useFrame, useThree } from "@react-three/fiber";
 import { CuboidCollider, RigidBody } from "@react-three/rapier";
 import Car, { CarHandle } from "~/src/entities/car";
-import { useEffect, useRef, useState, useMemo } from "react";
-import { Vector3, Quaternion, Euler, GridHelper, Object3D } from "three";
-import { Box } from "@react-three/drei";
+import { useEffect, useRef, useMemo } from "react";
+import { Vector3, Quaternion, Euler, GridHelper, Object3D, Mesh } from "three";
+import { Box, Html } from "@react-three/drei";
 
 // ===============================
 // 카메라 설정 상수
@@ -31,6 +31,9 @@ function Scene() {
   const { camera } = useThree();
   const keyQueue = useRef<Record<string, boolean>>({});
   const carRef = useRef<CarHandle>(null);
+  const boxRef = useRef<Mesh>(null);
+  const boxPositionRef = useRef(new Vector3());
+  const htmlContentRef = useRef<HTMLDivElement>(null);
 
   // HTML 코드: Follow cam 구조 - pivot, yaw, pitch
   const pivot = useMemo(() => new Object3D(), []);
@@ -149,19 +152,33 @@ function Scene() {
     pitch.rotation.x = pitchRotation.current;
 
     camera.position.z = cameraDistance.current;
+
+    if (boxRef.current && htmlContentRef.current) {
+      boxRef.current.getWorldPosition(boxPositionRef.current);
+      htmlContentRef.current.textContent = `${boxPositionRef.current.x.toFixed(
+        2
+      )}, ${boxPositionRef.current.y.toFixed(
+        2
+      )}, ${boxPositionRef.current.z.toFixed(2)}`;
+    }
   });
+
   return (
     <>
       <primitive object={pivot} /> {/* camera */}
       <Car ref={carRef} position={[0, 0, 0]} keyQueue={keyQueue} />
-      <RigidBody>
-        <Box position={[0, -1, 10]} />
+      <RigidBody position={[0, 0.5, -2.5]}>
+        <Box ref={boxRef}>
+          <Html position={[0, 1, 0]}>
+            <div ref={htmlContentRef}>0.00, 0.00, 0.00</div>
+          </Html>
+        </Box>
       </RigidBody>
       {/* 일반 경사면 */}
       <RigidBody type={"fixed"}>
         <Box
           rotation={[Math.PI / 16, 0, 0]}
-          position={[0, 0, -500]}
+          position={[0, 0, -50]}
           args={[3, 0.1, 25]}
         />
       </RigidBody>

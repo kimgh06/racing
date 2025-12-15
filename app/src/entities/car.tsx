@@ -9,8 +9,17 @@ import {
   useRef,
   useEffect,
   useState,
+  useMemo,
 } from "react";
-import { Object3D, Vector3, Quaternion, Euler } from "three";
+import {
+  Object3D,
+  Vector3,
+  Quaternion,
+  Euler,
+  Shape,
+  ExtrudeGeometry,
+  Mesh,
+} from "three";
 import { Html } from "@react-three/drei";
 
 type CarProps = {
@@ -102,12 +111,26 @@ const Car = forwardRef<CarHandle, CarProps>(function Car(
   const driftStartTime = useRef<number | null>(null); // 드리프트 시작 시간
   const prevSpeed = useRef(0); // 이전 프레임의 속도 (가속도 계산용)
   const driftGaugeValue = useRef(0); // 드리프트 게이지 누적 값
+  const [score, setScore] = useState(0);
 
   // 상태 패널용 상태 관리
   const [displaySpeed, setDisplaySpeed] = useState(0);
   const [displayCollision, setDisplayCollision] = useState(false);
   const [displayDriftMode, setDisplayDriftMode] = useState(false);
   const [driftGauge, setDriftGauge] = useState(0); // 드리프트 게이지 (0-100)
+
+  // 잡기 감지 관련 상태
+  const detectedObject = useRef<RapierRigidBody | null>(null); // 감지된 오브젝트
+  const [displayDetectedObject, setDisplayDetectedObject] = useState(false); // 감지 상태 표시용
+  const [displayDetectedDistance, setDisplayDetectedDistance] = useState<
+    number | null
+  >(null); // 감지된 오브젝트와의 거리 (m)
+
+  // 잡기 감지 설정
+  const GRAB_DETECTION = {
+    MAX_DISTANCE: 2.0, // 최대 감지 거리 (2m)
+    ANGLE: (120 * Math.PI) / 180, // 120도 (라디안)
+  } as const;
 
   // 호버보드 설정
   const GROUND_OFFSET = 0.05; // 바닥에서의 오프셋 (최소 0.2 높이)
@@ -116,6 +139,45 @@ const Car = forwardRef<CarHandle, CarProps>(function Car(
 
   // followTarget 위치 설정
   followTarget.position.set(0, 0.5, 0);
+
+  // 부채꼴 시각화용 geometry 생성 (120도, 2m 반경)
+  const sectorGeometry = useMemo(() => {
+    const shape = new Shape();
+    const radius = GRAB_DETECTION.MAX_DISTANCE;
+    const angle = GRAB_DETECTION.ANGLE; // 120도
+
+    // 부채꼴 모양 만들기
+    shape.moveTo(0, 0); // 중심점
+    // 시작 각도: -angle/2 (왼쪽 끝)
+    const startAngle = -angle / 2;
+    // 끝 각도: angle/2 (오른쪽 끝)
+    const endAngle = angle / 2;
+
+    // 호 그리기
+    for (let i = 0; i <= 32; i++) {
+      const t = i / 32;
+      const currentAngle = startAngle + t * (endAngle - startAngle);
+      const x = Math.cos(currentAngle) * radius;
+      const z = Math.sin(currentAngle) * radius;
+      if (i === 0) {
+        shape.lineTo(x, z);
+      } else {
+        shape.lineTo(x, z);
+      }
+    }
+    shape.lineTo(0, 0); // 중심으로 돌아오기
+
+    // 얇은 두께로 extrude (시각화용)
+    const extrudeSettings = {
+      depth: 0.01, // 매우 얇게
+      bevelEnabled: false,
+    };
+
+    return new ExtrudeGeometry(shape, extrudeSettings);
+  }, []);
+
+  // 부채꼴 시각화용 ref
+  const sectorRef = useRef<Mesh>(null);
 
   // 카트바디 초기화: 위치와 속도 명시적 설정 (Joint 생성 타이밍 문제 해결)
   const initFrameCount = useRef(0);
@@ -683,6 +745,10 @@ const Car = forwardRef<CarHandle, CarProps>(function Car(
         100,
         Math.max(0, driftGaugeValue.current)
       );
+      if (driftGaugeValue.current === 100) {
+        setScore((s) => s + 1);
+        driftGaugeValue.current = 0;
+      }
       setDriftGauge(driftGaugeValue.current);
     } else {
       // 드리프트 모드가 아니면 게이지 유지 (감소하지 않음)
@@ -691,6 +757,161 @@ const Car = forwardRef<CarHandle, CarProps>(function Car(
       // 게이지는 그대로 유지
       setDriftGauge(driftGaugeValue.current);
     }
+  };
+
+  // 12. 오브젝트 감지 로직 (120도 부채꼴 범위)
+  // 차량 중심점을 기준으로 전방 120도 범위 내 오브젝트 감지
+  const detectGrabableObject = (
+    forward: Vector3,
+    currentPos: { x: number; y: number; z: number },
+    rotateY: number
+  ) => {
+    if (!cartbodyRef.current) {
+      detectedObject.current = null;
+      setDisplayDetectedObject(false);
+      return;
+    }
+
+    // 차량 중심점 (RigidBody의 translation은 이미 차량 mesh의 중심을 나타냄)
+
+    // 모든 RigidBody 검색
+    let closestObject: RapierRigidBody | null = null;
+    let closestDistance: number = GRAB_DETECTION.MAX_DISTANCE;
+
+    let bodyCount = 0;
+    let dynamicBodyCount = 0;
+    let inRangeCount = 0;
+    let inAngleCount = 0;
+
+    world.bodies.forEach((body) => {
+      bodyCount++;
+
+      // 자기 자신은 제외
+      if (body.handle === cartbodyRef.current!.handle) return;
+
+      // 고정된 오브젝트는 제외
+      if (body.isFixed()) return;
+
+      dynamicBodyCount++;
+
+      // RigidBody의 중심점
+      const bodyCenter = body.translation();
+
+      // RigidBody의 회전 가져오기
+      const bodyRotation = body.rotation();
+      const bodyQuat = new Quaternion(
+        bodyRotation.x,
+        bodyRotation.y,
+        bodyRotation.z,
+        bodyRotation.w
+      );
+
+      // RigidBody의 collider shape 중심을 사용
+      // colliders()를 통해 collider 정보를 가져올 수 있지만,
+      // 실제로는 body.translation()이 이미 collider의 중심을 반환합니다
+      //
+      // 하지만 mesh의 position이 RigidBody 중심과 다르다면,
+      // RigidBody의 collider shape의 중심과 mesh의 중심이 다를 수 있습니다
+      //
+      // React Three Rapier에서 RigidBody 내부의 mesh position은 RigidBody 중심을 기준으로 한 상대 위치이므로,
+      // body.translation()은 RigidBody의 중심이지 mesh의 중심이 아닐 수 있습니다
+      //
+      // 해결: body.translation()을 그대로 사용 (이미 collider의 중심)
+      // 만약 mesh의 position이 있다면, 그 오프셋을 고려해야 하지만 감지 로직에서는 알 수 없음
+      // 따라서 body.translation()을 사용하는 것이 맞습니다 (collider 중심)
+      const objectPos = bodyCenter;
+
+      // 차량 중심에서 오브젝트 중심까지의 벡터
+      const toObject = new Vector3(
+        objectPos.x - currentPos.x,
+        objectPos.y - currentPos.y,
+        objectPos.z - currentPos.z
+      );
+
+      const distance = toObject.length();
+
+      // 감지된 오브젝트와의 거리 업데이트 (미터 단위)
+      setDisplayDetectedDistance(distance);
+
+      // 거리 체크
+      if (distance > GRAB_DETECTION.MAX_DISTANCE) return;
+
+      inRangeCount++;
+
+      // 너무 가까운 경우 (0.1m 이하) 각도 체크 없이 바로 감지
+      let isInAngle = false;
+
+      // 방향 체크: 120도 부채꼴 범위 내인지 확인
+      // toObject 벡터의 방향 각도를 직접 계산 (XZ 평면)
+      // Three.js에서 XZ 평면의 각도는 Math.atan2(x, z)를 사용
+      // 하지만 일반적인 좌표계에서는 Math.atan2(z, x)를 사용하므로 확인 필요
+      // 차량의 forward가 (0, 0, -1)이므로, 차량이 0도일 때 z축 음의 방향
+      // Math.atan2(0, -1) = Math.PI 또는 -Math.PI
+      //
+      // 실제로는 Math.atan2(x, z)가 맞습니다 (XZ 평면에서)
+      const toObjectAngle = Math.atan2(toObject.x, toObject.z);
+
+      // 차량의 Y 회전 각도와의 차이 계산 (정규화)
+      let angleDiff = toObjectAngle - rotateY;
+      // -PI ~ PI 범위로 정규화
+      while (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
+      while (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
+
+      // 절댓값으로 변환
+      angleDiff = Math.abs(angleDiff);
+
+      // 디버깅: 각도 계산 확인
+      if (Math.random() < 0.01 && distance < GRAB_DETECTION.MAX_DISTANCE) {
+        console.log("각도 디버그:", {
+          toObject: {
+            x: toObject.x.toFixed(2),
+            z: toObject.z.toFixed(2),
+          },
+          toObjectAngle: ((toObjectAngle * 180) / Math.PI).toFixed(1) + "도",
+          차량Y회전: ((rotateY * 180) / Math.PI).toFixed(1) + "도",
+          각도차이: ((angleDiff * 180) / Math.PI).toFixed(1) + "도",
+          범위내: angleDiff <= GRAB_DETECTION.ANGLE / 2,
+        });
+      }
+
+      // 120도 = 60도씩 양쪽 (총 120도)
+      // 각도 차이가 60도 이하이면 범위 내
+      isInAngle = angleDiff <= GRAB_DETECTION.ANGLE / 2;
+
+      if (isInAngle || distance < 0.3) {
+        inAngleCount++;
+        if (distance < closestDistance) {
+          closestDistance = distance;
+          closestObject = body;
+        }
+      }
+    });
+
+    // 디버깅용 (주석 처리 가능)
+    if (bodyCount > 0 && Math.random() < 0.01) {
+      // 1% 확률로 로그 출력 (성능 고려)
+      console.log("감지 디버그:", {
+        전체오브젝트: bodyCount,
+        동적오브젝트: dynamicBodyCount,
+        범위내: inRangeCount,
+        각도내: inAngleCount,
+        감지됨: closestObject !== null,
+        forward: {
+          x: forward.x.toFixed(2),
+          y: forward.y.toFixed(2),
+          z: forward.z.toFixed(2),
+        },
+        차량위치: {
+          x: currentPos.x.toFixed(2),
+          y: currentPos.y.toFixed(2),
+          z: currentPos.z.toFixed(2),
+        },
+      });
+    }
+
+    // 감지된 오브젝트 업데이트
+    detectedObject.current = closestObject;
+    setDisplayDetectedObject(closestObject !== null);
   };
 
   // 초기 몇 프레임 동안 카트바디 위치 강제 고정 (들썩거림 방지)
@@ -722,6 +943,9 @@ const Car = forwardRef<CarHandle, CarProps>(function Car(
     const forward = new Vector3(0, 0, -1);
     forward.applyQuaternion(currentQuat);
 
+    // 현재 위치 가져오기
+    const currentPos = cartbodyRef.current.translation();
+
     // 물리 로직 실행 순서
     handleHoverboardLogic(delta);
     handleInput(delta);
@@ -734,6 +958,21 @@ const Car = forwardRef<CarHandle, CarProps>(function Car(
     handleUpsideDownRecovery(currentQuat, delta);
     limitAngularVelocity();
     updateDisplayPanel(delta);
+
+    // 오브젝트 감지
+    detectGrabableObject(forward, currentPos, currentRot.y);
+    // 부채꼴 시각화 업데이트 (차량 회전에 맞춰)
+    if (sectorRef.current) {
+      // 차량의 회전을 부채꼴에 적용
+      sectorRef.current.rotation.copy(
+        new Euler().setFromQuaternion(currentQuat, "YXZ")
+      );
+      sectorRef.current.rotation.y += Math.PI / 2;
+      sectorRef.current.rotation.x += Math.PI / 2;
+
+      // 차량 위치에 맞춰 이동
+      sectorRef.current.position.set(currentPos.x, currentPos.y, currentPos.z);
+    }
   });
 
   const handle = () => ({
@@ -862,6 +1101,18 @@ const Car = forwardRef<CarHandle, CarProps>(function Car(
               }}
             >
               <div style={{ display: "flex", justifyContent: "space-between" }}>
+                <span style={{ color: "#888" }}>Position:</span>
+                <span
+                  style={{
+                    fontWeight: "bold",
+                  }}
+                >
+                  {cartbodyRef.current?.translation().x.toFixed(1)},
+                  {cartbodyRef.current?.translation().y.toFixed(1)},
+                  {cartbodyRef.current?.translation().z.toFixed(1)}
+                </span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between" }}>
                 <span style={{ color: "#888" }}>Speed:</span>
                 <span
                   style={{
@@ -892,7 +1143,19 @@ const Car = forwardRef<CarHandle, CarProps>(function Car(
                     color: displayDriftMode ? "#ffd93d" : "#95e1d3",
                   }}
                 >
-                  {displayDriftMode ? "Drift" : "Normal"}
+                  {score}, {displayDriftMode ? "Drift" : "Normal"}
+                </span>
+              </div>
+              {/* 감지된 오브젝트 표시 */}
+              <div style={{ display: "flex", justifyContent: "space-between" }}>
+                <span style={{ color: "#888" }}>Detect:</span>
+                <span
+                  style={{
+                    fontWeight: "bold",
+                    color: displayDetectedObject ? "#00ff00" : "#888",
+                  }}
+                >
+                  {displayDetectedDistance?.toFixed(2)} m
                 </span>
               </div>
               {/* 드리프트 게이지 */}
@@ -925,6 +1188,21 @@ const Car = forwardRef<CarHandle, CarProps>(function Car(
           </div>
         </Html>
       </RigidBody>
+
+      {/* 부채꼴 감지 범위 시각화 (물리 엔진 영향 없음, RigidBody 밖에 위치) */}
+      {/* <mesh
+        ref={sectorRef}
+        geometry={sectorGeometry}
+        renderOrder={-1} // 다른 오브젝트 뒤에 렌더링
+      >
+        <meshBasicMaterial
+          color={displayDetectedObject ? 0x00ff00 : 0x888888}
+          transparent
+          opacity={0.3}
+          side={2} // DoubleSide
+          depthWrite={false} // 깊이 버퍼에 쓰지 않음 (투명도 처리)
+        />
+      </mesh> */}
     </>
   );
 });
