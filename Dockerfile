@@ -30,6 +30,6 @@ COPY --from=builder /app/public ./public
 
 EXPOSE 3000
 
-# Start Remix server
-CMD ["npm", "run", "start"]
+# Start Remix server (Node 20 + ESM: point directly at build entry)
+CMD ["npx", "remix-serve", "./build/index.js"]
 
