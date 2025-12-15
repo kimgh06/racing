@@ -3,8 +3,13 @@ FROM node:20-alpine AS builder
 WORKDIR /app
 
 # Install dependencies (including dev deps for build)
-COPY package.json package-lock.json* pnpm-lock.yaml* yarn.lock* ./ 2>/dev/null || true
-RUN npm install --production=false
+COPY package.json ./
+# 필요한 경우 사용하는 패키지 매니저의 lock 파일을 추가로 복사하세요 (하나만 사용하는 것을 권장)
+# COPY package-lock.json ./
+# COPY pnpm-lock.yaml ./
+# COPY yarn.lock ./
+
+RUN npm install
 
 # Copy source and build Remix app
 COPY . .
@@ -27,5 +32,4 @@ EXPOSE 3000
 
 # Start Remix server
 CMD ["npm", "run", "start"]
-
 
