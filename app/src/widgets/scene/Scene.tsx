@@ -2,8 +2,18 @@ import { useFrame, useThree } from "@react-three/fiber";
 import { CuboidCollider, RigidBody } from "@react-three/rapier";
 import Car, { CarHandle } from "~/src/entities/car";
 import { useEffect, useRef, useMemo } from "react";
-import { Vector3, Quaternion, Euler, GridHelper, Object3D, Mesh } from "three";
-import { Box, Html } from "@react-three/drei";
+import {
+  Vector3,
+  Quaternion,
+  Euler,
+  GridHelper,
+  Object3D,
+  Mesh,
+  DoubleSide,
+  MeshStandardMaterial,
+} from "three";
+import { Box, Html, Plane } from "@react-three/drei";
+import PlaneWall from "~/src/entities/wall";
 
 // ===============================
 // 카메라 설정 상수
@@ -34,6 +44,17 @@ function Scene() {
   const boxRef = useRef<Mesh>(null);
   const boxPositionRef = useRef(new Vector3());
   const htmlContentRef = useRef<HTMLDivElement>(null);
+
+  // Material 인스턴스 메모이제이션 (매 렌더링마다 재생성 방지)
+  const greenMaterial = useMemo(
+    () => new MeshStandardMaterial({ side: DoubleSide, color: "green" }),
+    []
+  );
+
+  // useFrame에서 재사용할 객체들 (가비지 컬렉션 방지)
+  const tempVector = useRef(new Vector3());
+  const tempQuaternion = useRef(new Quaternion());
+  const tempEuler = useRef(new Euler());
 
   // HTML 코드: Follow cam 구조 - pivot, yaw, pitch
   const pivot = useMemo(() => new Object3D(), []);
@@ -113,17 +134,19 @@ function Scene() {
     // HTML 코드: Follow cam 업데이트
     // this.followTarget.getWorldPosition(this.v)
     if (carRef.current?.followTarget) {
-      const v = new Vector3();
-      carRef.current.followTarget.getWorldPosition(v);
+      carRef.current.followTarget.getWorldPosition(tempVector.current);
 
       // 카메라가 조금 느리게 카트를 따라가도록 lerp 속도 조정
-      pivot.position.lerp(v, delta * CAMERA_CONFIG.FOLLOW.POSITION_SPEED);
+      pivot.position.lerp(
+        tempVector.current,
+        delta * CAMERA_CONFIG.FOLLOW.POSITION_SPEED
+      );
     }
 
     // 카트의 직진 방향에 따라 시점 고정
     if (carRef.current?.rigidBodyRef.current) {
       const carRotation = carRef.current.rigidBodyRef.current.rotation();
-      const carQuat = new Quaternion(
+      tempQuaternion.current.set(
         carRotation.x,
         carRotation.y,
         carRotation.z,
@@ -131,10 +154,10 @@ function Scene() {
       );
 
       // Quaternion을 Euler로 변환하여 Y축 회전 각도 추출
-      const euler = new Euler().setFromQuaternion(carQuat, "YXZ");
+      tempEuler.current.setFromQuaternion(tempQuaternion.current, "YXZ");
 
       // 카트의 Y축 회전에 카메라 yaw를 맞춤
-      const targetYaw = euler.y;
+      const targetYaw = tempEuler.current.y;
 
       // 360도 회전 시 휙 돌아가는 현상을 완화하기 위해
       // 현재 yaw와 목표 yaw의 차이를 -PI ~ PI 범위로 정규화하여
@@ -165,9 +188,12 @@ function Scene() {
 
   return (
     <>
+      <ambientLight intensity={0.5} />
+      <directionalLight position={[10, 10, 5]} intensity={1} />
       <primitive object={pivot} /> {/* camera */}
       <Car ref={carRef} position={[0, 0, 0]} keyQueue={keyQueue} />
-      <RigidBody position={[0, 0.5, -2.5]}>
+      {/* moving box */}
+      <RigidBody position={[0, 0.5, 25]}>
         <Box ref={boxRef}>
           <Html position={[0, 1, 0]}>
             <div ref={htmlContentRef}>0.00, 0.00, 0.00</div>
@@ -176,16 +202,65 @@ function Scene() {
       </RigidBody>
       {/* 일반 경사면 */}
       <RigidBody type={"fixed"}>
-        <Box
-          rotation={[Math.PI / 16, 0, 0]}
-          position={[0, 0, -50]}
-          args={[3, 0.1, 25]}
+        <Plane
+          rotation={[(-Math.PI * 7) / 16, 0, 0]}
+          position={[0, 1.9, -55]}
+          args={[4, 25]}
+          material={greenMaterial}
+        />
+      </RigidBody>
+      {/* Guide Lane */}
+      <RigidBody type={"fixed"}>
+        <PlaneWall position={[-2, 0, -26]} args={[55, 1]} />
+        <PlaneWall position={[2, 0, -26]} args={[55, 1]} />
+        <PlaneWall position={[5, 0, -85]} args={[10, 1]} />
+        <PlaneWall position={[-5, 0, -85]} args={[10, 1]} />
+        <PlaneWall position={[0, 0, -80]} args={[10, 1]} rotateY={0} />
+        <PlaneWall
+          position={[0, 0, -95]}
+          args={[10 * Math.sqrt(2), 1]}
+          rotateY={Math.PI / 4}
+        />
+        <PlaneWall position={[10, 0, -90]} args={[10, 1]} rotateY={0} />
+        <PlaneWall position={[10, 0, -100]} args={[10, 1]} rotateY={0} />
+        <PlaneWall position={[30, 0, -90]} args={[40, 1]} rotateY={0} />
+        <PlaneWall position={[30, 0, -100]} args={[40, 1]} rotateY={0} />
+        <PlaneWall
+          position={[55, 0, -95]}
+          args={[10 * Math.sqrt(2), 1]}
+          rotateY={-Math.PI / 4}
+        />
+        <PlaneWall position={[60, 0, -85]} args={[10, 1]} />
+        <PlaneWall position={[50, 0, -85]} args={[10, 1]} />
+        <PlaneWall position={[50, 0, 20]} args={[200, 1]} />
+        <PlaneWall position={[60, 0, 20]} args={[200, 1]} />
+        <PlaneWall
+          position={[55, 0, 125]}
+          args={[10 * Math.sqrt(2), 1]}
+          rotateY={Math.PI / 4}
+        />
+        <PlaneWall position={[0, 0, 120]} args={[100, 1]} rotateY={0} />
+        <PlaneWall position={[0, 0, 130]} args={[100, 1]} rotateY={0} />
+        <PlaneWall
+          position={[-55, 0, 125]}
+          args={[10 * Math.sqrt(2), 1]}
+          rotateY={-Math.PI / 4}
+        />
+        <PlaneWall position={[-60, 0, 61.25]} args={[120.5, 1]} />
+        <PlaneWall position={[-50, 0, 62.75]} args={[114.5, 1]} />
+        <PlaneWall position={[-26, 0, 1.5]} args={[48, 1]} rotateY={0} />
+        <PlaneWall position={[-26, 0, 5.5]} args={[48, 1]} rotateY={0} />
+        <PlaneWall position={[-55, 0, 1.5]} args={[10, 1]} rotateY={0} />
+        <PlaneWall
+          position={[0, 0, 3.5]}
+          args={[4 * Math.sqrt(2), 1]}
+          rotateY={Math.PI / 4}
         />
       </RigidBody>
       {/* 바닥 */}
-      <gridHelper position={[0, -1.5, 0]} args={[2000, 2000]} />
+      <gridHelper position={[0, -0.5, 0]} args={[2000, 2000]} />
       <CuboidCollider
-        position={[0, -2, 0]}
+        position={[0, -1, 0]}
         args={[1000, 0.5, 1000]}
       ></CuboidCollider>
     </>

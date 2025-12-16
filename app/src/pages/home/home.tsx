@@ -9,7 +9,7 @@ export default function Index() {
       <Canvas style={{ width: "100svw", height: "100svh" }}>
         <color attach="background" args={["white"]} />
         <Suspense>
-          <Physics debug>
+          <Physics>
             <Scene />
           </Physics>
         </Suspense>
