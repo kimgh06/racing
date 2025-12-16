@@ -57,7 +57,7 @@ const Car = forwardRef<CarHandle, CarProps>(function Car(
 
     // 드리프트 관련
     DRIFT: {
-      SPEED_THRESHOLD: 3.0, // 이 속도 이하면 드리프트 비활성 (입력 무시)
+      SPEED_THRESHOLD: 15.0, // 15 m/s 이하면 드리프트 비활성 (입력 무시)
       ACCEL_MULTIPLIER: 0.2, // 드리프트 중 추진력 배율 (0.2면 20%만 남김)
     },
 
@@ -521,24 +521,15 @@ const Car = forwardRef<CarHandle, CarProps>(function Car(
     }
   };
 
-  // 7. 조향 토크 처리
+  // 7. 조향 토크 처리 (단순화 버전)
+  // - 속도/드리프트별 토크 계산 제거
+  // - 단순히 steerAngle과 진행 방향(전진/후진)에 따라 Y축 각속도만 설정
   const handleSteeringTorque = (currentQuat: Quaternion, delta: number) => {
     if (!cartbodyRef.current) return;
 
+    const angvel = cartbodyRef.current.angvel();
     const currentVel = cartbodyRef.current.linvel();
     const currentSpeed = Math.sqrt(currentVel.x ** 2 + currentVel.z ** 2);
-
-    const carForward = new Vector3(0, 0, -1);
-    carForward.applyQuaternion(currentQuat);
-    const velocityDir =
-      currentSpeed > 0.1
-        ? new Vector3(
-            currentVel.x / currentSpeed,
-            0,
-            currentVel.z / currentSpeed
-          )
-        : carForward;
-    const isReversing = carForward.dot(velocityDir) < 0;
 
     const isSteeringActive =
       keyQueue?.current &&
@@ -547,83 +538,63 @@ const Car = forwardRef<CarHandle, CarProps>(function Car(
         keyQueue.current["l"] ||
         keyQueue.current["L"]);
 
-    if (!isSteeringActive) {
-      const angvel = cartbodyRef.current.angvel();
+    // 조향 키가 없으면 Y축 회전을 서서히 감쇠
+    if (!isSteeringActive || Math.abs(steerAngle.current) < 0.01) {
       cartbodyRef.current.setAngvel(
         {
           x: angvel.x,
-          y: 0,
+          y: angvel.y * 0.8, // 부드럽게 감쇠
           z: angvel.z,
         },
         true
       );
-      steerAngle.current = 0;
       return;
     }
 
-    if (isSteeringActive && Math.abs(steerAngle.current) > 0.01) {
-      if (currentSpeed > 0.1) {
-        const speedFactor = Math.max(
-          currentSpeed / CAR_TUNING.FORWARD.MAX_SPEED_FOR_ACCEL,
-          0.3
-        );
-        let torqueStrength =
-          steerAngle.current * speedFactor * CAR_TUNING.STEER.TORQUE_MULTIPLIER;
+    // 단순 조향 속도: steerAngle에 비례
+    // 기본 회전 상수를 키워 전체적으로 더 잘 꺾이도록 조정
+    const baseYawSpeed = 1.0; // 기본 회전 속도 (값이 클수록 더 빠르게 회전)
 
-        const speedDamping = Math.min(1.0, 5.0 / currentSpeed);
-        const speedBoost = Math.max(1.0, 3.0 / currentSpeed);
-        torqueStrength *= speedDamping * speedBoost;
+    // 속도의 로그에 반비례하는 계수 (일반 주행용: 빠를수록 회전 덜 하도록)
+    // log(속도+1)가 1 이하일 때는 1로 클램프해서 저속에서는 풀 회전
+    const speedForTurn = Math.max(0, currentSpeed);
+    const logSpeed = Math.log(speedForTurn + 1); // 자연로그 사용
+    const invSpeedFactor = 1 / Math.max(1, logSpeed);
 
-        const isDriftModeSteer =
-          objectHit.current &&
-          currentSpeed > CAR_TUNING.DRIFT.SPEED_THRESHOLD &&
-          keyQueue?.current &&
-          (keyQueue.current["D"] || keyQueue.current["d"]);
+    // 기본: 일반 주행일 때는 속도(log)에 반비례
+    let yawSpeed = steerAngle.current * baseYawSpeed * invSpeedFactor;
 
-        if (isDriftModeSteer) {
-          torqueStrength *= CAR_TUNING.STEER.DRIFT_TORQUE_MULTIPLIER;
-        }
+    // 드리프트 중이면: 좌우 회전을 "속도 로그 값"에 비례하도록 변경
+    const isDriftSteerMode =
+      objectHit.current &&
+      keyQueue?.current &&
+      (keyQueue.current["D"] || keyQueue.current["d"]);
+    if (isDriftSteerMode) {
+      const driftYawMultiplier = 0.5; // 드리프트 시 기본 회전 배율 (작게)
+      // 속도 로그 값(log(speed+1))에 비례: 빠를수록 더 많이 꺾이되 완만하게 증가
+      const driftLogSpeed = Math.log(speedForTurn + 1);
+      const driftSpeedFactor = Math.min(driftLogSpeed, 5); // 상한으로 과한 폭주 방지
 
-        const maxTorque = isDriftModeSteer
-          ? currentSpeed < CAR_TUNING.DRIFT.SPEED_THRESHOLD
-            ? CAR_TUNING.STEER.MAX_TORQUE.DRIFT.LOW_SPEED
-            : CAR_TUNING.STEER.MAX_TORQUE.DRIFT.HIGH_SPEED
-          : currentSpeed < CAR_TUNING.DRIFT.SPEED_THRESHOLD
-          ? CAR_TUNING.STEER.MAX_TORQUE.NORMAL.LOW_SPEED
-          : CAR_TUNING.STEER.MAX_TORQUE.NORMAL.HIGH_SPEED;
-        torqueStrength = Math.max(
-          -maxTorque,
-          Math.min(maxTorque, torqueStrength)
-        );
-
-        if (isReversing) {
-          torqueStrength = -torqueStrength;
-        }
-
-        cartbodyRef.current.applyTorqueImpulse(
-          {
-            x: 0,
-            y: torqueStrength * delta,
-            z: 0,
-          },
-          true
-        );
-      } else {
-        let torqueStrength = steerAngle.current * 0.5;
-        if (targetSpeed.current < 0) {
-          torqueStrength = -torqueStrength;
-        }
-
-        cartbodyRef.current.applyTorqueImpulse(
-          {
-            x: 0,
-            y: torqueStrength * delta,
-            z: 0,
-          },
-          true
-        );
-      }
+      yawSpeed =
+        steerAngle.current *
+        baseYawSpeed *
+        driftYawMultiplier *
+        driftSpeedFactor;
     }
+
+    // 후진 입력일 때는 반대로 회전
+    if (targetSpeed.current < 0) {
+      yawSpeed = -yawSpeed;
+    }
+
+    cartbodyRef.current.setAngvel(
+      {
+        x: angvel.x,
+        y: yawSpeed,
+        z: angvel.z,
+      },
+      true
+    );
   };
 
   // 8. 경사면 정렬
