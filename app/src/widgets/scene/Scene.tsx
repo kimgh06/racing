@@ -102,10 +102,10 @@ function Scene() {
     };
   }, []);
   const handleKeyDown = (event: KeyboardEvent) =>
-    (keyQueue.current[event.key] = true);
+    (keyQueue.current[event.code] = true);
 
   const handleKeyUp = (event: KeyboardEvent) =>
-    delete keyQueue.current[event.key];
+    delete keyQueue.current[event.code];
 
   useEffect(() => {
     document.addEventListener("keydown", handleKeyDown);
@@ -118,7 +118,7 @@ function Scene() {
 
   useFrame((state, delta) => {
     // R 키를 누르면 차량 위치/회전/속도를 초기화
-    if (keyQueue.current["r"] || keyQueue.current["R"]) {
+    if (keyQueue.current["KeyR"]) {
       const rigidBody = carRef.current?.rigidBodyRef.current;
       if (rigidBody) {
         // 초기 위치 (Car에 넘긴 position과 동일하게 맞춰야 함)

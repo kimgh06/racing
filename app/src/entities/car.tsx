@@ -89,6 +89,20 @@ const Car = forwardRef<CarHandle, CarProps>(function Car(
     },
   } as const;
 
+  // 물리적 키 위치 기반 매핑 (한/영 상태 무관)
+  const KEY_ALIAS = {
+    FORWARD: ["KeyI"], // I 키
+    BACKWARD: ["KeyK"], // K 키
+    LEFT: ["KeyJ"], // J 키
+    RIGHT: ["KeyL"], // L 키
+    DRIFT: ["KeyD"], // D 키
+  } as const;
+
+  const isKeyPressed = (
+    keys: Record<string, boolean>,
+    aliases: readonly string[]
+  ) => aliases.some((k) => keys[k]);
+
   const cartbodyRef = useRef<RapierRigidBody>(null);
   const followTarget = useRef(new Object3D()).current;
   const steerAngle = useRef(0);
@@ -133,48 +147,12 @@ const Car = forwardRef<CarHandle, CarProps>(function Car(
   } as const;
 
   // 호버보드 설정
-  const GROUND_OFFSET = 0.05; // 바닥에서의 오프셋 (최소 0.2 높이)
+  const GROUND_OFFSET = 0.05; // 바닥에서의 오프셋 (더 낮게 띄우기 위해 기존 0.05 → 0.03)
   const MAX_HEIGHT = maxHeight ?? Infinity; // 최대 높이 제한
   const MAX_HEIGHT_DIFF = 2.0; // 최대 높이 차이 (이 이상 차이나면 힘 제한)
 
   // followTarget 위치 설정
   followTarget.position.set(0, 0.5, 0);
-
-  // 부채꼴 시각화용 geometry 생성 (120도, 2m 반경)
-  const sectorGeometry = useMemo(() => {
-    const shape = new Shape();
-    const radius = GRAB_DETECTION.MAX_DISTANCE;
-    const angle = GRAB_DETECTION.ANGLE; // 120도
-
-    // 부채꼴 모양 만들기
-    shape.moveTo(0, 0); // 중심점
-    // 시작 각도: -angle/2 (왼쪽 끝)
-    const startAngle = -angle / 2;
-    // 끝 각도: angle/2 (오른쪽 끝)
-    const endAngle = angle / 2;
-
-    // 호 그리기
-    for (let i = 0; i <= 32; i++) {
-      const t = i / 32;
-      const currentAngle = startAngle + t * (endAngle - startAngle);
-      const x = Math.cos(currentAngle) * radius;
-      const z = Math.sin(currentAngle) * radius;
-      if (i === 0) {
-        shape.lineTo(x, z);
-      } else {
-        shape.lineTo(x, z);
-      }
-    }
-    shape.lineTo(0, 0); // 중심으로 돌아오기
-
-    // 얇은 두께로 extrude (시각화용)
-    const extrudeSettings = {
-      depth: 0.01, // 매우 얇게
-      bevelEnabled: false,
-    };
-
-    return new ExtrudeGeometry(shape, extrudeSettings);
-  }, []);
 
   // 부채꼴 시각화용 ref
   const sectorRef = useRef<Mesh>(null);
@@ -281,9 +259,12 @@ const Car = forwardRef<CarHandle, CarProps>(function Car(
     if (!objectHit.current) {
       targetSpeed.current *= 0.9;
     } else {
-      if (keys["i"] || keys["I"]) {
+      const isForward = isKeyPressed(keys, KEY_ALIAS.FORWARD);
+      const isBackward = isKeyPressed(keys, KEY_ALIAS.BACKWARD);
+
+      if (isForward) {
         targetSpeed.current = 10.0;
-      } else if (keys["k"] || keys["K"]) {
+      } else if (isBackward) {
         targetSpeed.current = -5.0;
       } else {
         targetSpeed.current *= 0.9;
@@ -291,8 +272,8 @@ const Car = forwardRef<CarHandle, CarProps>(function Car(
     }
 
     // 조향 입력
-    const isSteeringLeft = keys["j"] || keys["J"];
-    const isSteeringRight = keys["l"] || keys["L"];
+    const isSteeringLeft = isKeyPressed(keys, KEY_ALIAS.LEFT);
+    const isSteeringRight = isKeyPressed(keys, KEY_ALIAS.RIGHT);
 
     if (isSteeringLeft) {
       steerAngle.current += 3.0 * delta;
@@ -304,7 +285,7 @@ const Car = forwardRef<CarHandle, CarProps>(function Car(
     }
 
     // 점프 입력 처리
-    const isJumpPressed = keys[" "] || keys["Space"];
+    const isJumpPressed = keys["Space"]; // Space 키 (물리적 키 위치)
 
     if (jumpCooldown.current > 0) {
       jumpCooldown.current -= delta;
@@ -394,16 +375,14 @@ const Car = forwardRef<CarHandle, CarProps>(function Car(
 
     const isSteeringActive =
       keyQueue?.current &&
-      (keyQueue.current["j"] ||
-        keyQueue.current["J"] ||
-        keyQueue.current["l"] ||
-        keyQueue.current["L"]);
+      (isKeyPressed(keyQueue.current, KEY_ALIAS.LEFT) ||
+        isKeyPressed(keyQueue.current, KEY_ALIAS.RIGHT));
 
     const isDriftModeSide =
       objectHit.current &&
       Math.sqrt(vel.x ** 2 + vel.z ** 2) > CAR_TUNING.DRIFT.SPEED_THRESHOLD &&
       keyQueue?.current &&
-      (keyQueue.current["D"] || keyQueue.current["d"]);
+      isKeyPressed(keyQueue.current, KEY_ALIAS.DRIFT);
 
     const baseSideFriction = CAR_TUNING.SIDE_FRICTION.BASE;
     let sideFriction = baseSideFriction;
@@ -413,11 +392,21 @@ const Car = forwardRef<CarHandle, CarProps>(function Car(
       sideFriction = CAR_TUNING.SIDE_FRICTION.STEER;
     }
 
-    const newVel = {
+    let newVel = {
       x: velForward.x + velSide.x * sideFriction,
       y: vel.y,
       z: velForward.z + velSide.z * sideFriction,
     };
+
+    // 드리프트 중에는 전후 속도에 추가 감속을 걸어 더 빠르게 감속
+    if (isDriftModeSide) {
+      const driftBrakeFactor = 0.995; // 값이 작을수록 더 강한 감속 (0.995이면 매 프레임 0.5% 감소)
+      newVel = {
+        x: newVel.x * driftBrakeFactor,
+        y: newVel.y,
+        z: newVel.z * driftBrakeFactor,
+      };
+    }
 
     cartbodyRef.current.setLinvel(newVel, true);
   };
@@ -433,11 +422,24 @@ const Car = forwardRef<CarHandle, CarProps>(function Car(
       objectHit.current &&
       speedForAccel > CAR_TUNING.DRIFT.SPEED_THRESHOLD &&
       keyQueue?.current &&
-      (keyQueue.current["D"] || keyQueue.current["d"]);
+      isKeyPressed(keyQueue.current, KEY_ALIAS.DRIFT);
 
     let effectiveSpeed = targetSpeed.current;
     if (isDriftModeAccel) {
       effectiveSpeed *= CAR_TUNING.DRIFT.ACCEL_MULTIPLIER;
+    }
+
+    // 경사면(평평하지 않은 바닥)에서는 가속을 줄이기
+    // groundNormal.y가 1에 가까울수록 평지, 0.7~0.99 사이를 경사면으로 간주
+    const isOnSlope =
+      objectHit.current &&
+      groundNormal.current.y > 0.7 &&
+      groundNormal.current.y < 0.99;
+    if (isOnSlope) {
+      // 경사면에서는 가속을 더 강하게 줄이기 (경사 심할수록 더 약하게)
+      const rawFactor = groundNormal.current.y * 0.6; // 기본적으로 60%로 축소
+      const slopeFactor = Math.max(0.25, rawFactor); // 최소 0.25까지 떨어뜨림
+      effectiveSpeed *= slopeFactor;
     }
 
     const baseAccel = CAR_TUNING.FORWARD.BASE_ACCEL;
@@ -533,10 +535,8 @@ const Car = forwardRef<CarHandle, CarProps>(function Car(
 
     const isSteeringActive =
       keyQueue?.current &&
-      (keyQueue.current["j"] ||
-        keyQueue.current["J"] ||
-        keyQueue.current["l"] ||
-        keyQueue.current["L"]);
+      (isKeyPressed(keyQueue.current, KEY_ALIAS.LEFT) ||
+        isKeyPressed(keyQueue.current, KEY_ALIAS.RIGHT));
 
     // 조향 키가 없으면 Y축 회전을 서서히 감쇠
     if (!isSteeringActive || Math.abs(steerAngle.current) < 0.01) {
@@ -568,9 +568,9 @@ const Car = forwardRef<CarHandle, CarProps>(function Car(
     const isDriftSteerMode =
       objectHit.current &&
       keyQueue?.current &&
-      (keyQueue.current["D"] || keyQueue.current["d"]);
+      isKeyPressed(keyQueue.current, KEY_ALIAS.DRIFT);
     if (isDriftSteerMode) {
-      const driftYawMultiplier = 0.5; // 드리프트 시 기본 회전 배율 (작게)
+      const driftYawMultiplier = 0.8; // 드리프트 시 기본 회전 배율 (더 강하게 조향)
       // 속도 로그 값(log(speed+1))에 비례: 빠를수록 더 많이 꺾이되 완만하게 증가
       const driftLogSpeed = Math.log(speedForTurn + 1);
       const driftSpeedFactor = Math.min(driftLogSpeed, 5); // 상한으로 과한 폭주 방지
@@ -694,19 +694,26 @@ const Car = forwardRef<CarHandle, CarProps>(function Car(
       objectHit.current &&
       speed > CAR_TUNING.DRIFT.SPEED_THRESHOLD &&
       keyQueue?.current &&
-      (keyQueue.current["D"] || keyQueue.current["d"])
+      isKeyPressed(keyQueue.current, KEY_ALIAS.DRIFT)
         ? true
         : false;
     setDisplayDriftMode(isDriftActive);
 
+    // 좌우 회전 중인지 확인
+    const isSteeringActive =
+      keyQueue?.current &&
+      (isKeyPressed(keyQueue.current, KEY_ALIAS.LEFT) ||
+        isKeyPressed(keyQueue.current, KEY_ALIAS.RIGHT));
+
     // 드리프트 게이지 계산: 속도²에 비례 (누적)
-    if (isDriftActive && cartbodyRef.current) {
+    // 드리프트 모드 + 좌우 회전 중일 때만 게이지 증가
+    if (isDriftActive && isSteeringActive && cartbodyRef.current) {
       // 속도 제곱 계산
       const speedSquared = speed * speed;
 
       // 게이지 증가량 = 속도² × delta × 스케일
       // 속도의 제곱에 비례하여 게이지 증가
-      const gaugeIncrease = speedSquared * delta * 0.1; // 스케일링 팩터 0.1
+      const gaugeIncrease = speedSquared * delta * 0.2; // 스케일링 팩터 0.5
 
       // 게이지 누적
       driftGaugeValue.current += gaugeIncrease;
@@ -716,17 +723,17 @@ const Car = forwardRef<CarHandle, CarProps>(function Car(
         100,
         Math.max(0, driftGaugeValue.current)
       );
-      if (driftGaugeValue.current === 100) {
+      if (driftGaugeValue.current >= 100) {
         setScore((s) => s + 1);
         driftGaugeValue.current = 0;
       }
+      // 즉시 UI 업데이트 (매 프레임마다)
       setDriftGauge(driftGaugeValue.current);
     } else {
       // 드리프트 모드가 아니면 게이지 유지 (감소하지 않음)
       driftStartTime.current = null;
       prevSpeed.current = speed;
-      // 게이지는 그대로 유지
-      setDriftGauge(driftGaugeValue.current);
+      // 게이지는 그대로 유지 (UI 업데이트는 필요시에만)
     }
   };
 
