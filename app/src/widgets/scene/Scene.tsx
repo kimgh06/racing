@@ -1,7 +1,7 @@
 import { useFrame, useThree } from "@react-three/fiber";
 import { CuboidCollider, RigidBody } from "@react-three/rapier";
 import Car, { CarHandle } from "~/src/entities/car";
-import { useEffect, useRef, useMemo } from "react";
+import { useEffect, useRef, useMemo, useState } from "react";
 import {
   Vector3,
   Quaternion,
@@ -14,6 +14,7 @@ import {
 } from "three";
 import { Box, Html, Plane } from "@react-three/drei";
 import PlaneWall from "~/src/entities/wall";
+import SavePoint, { SavePointData } from "~/src/entities/savepoint";
 
 // ===============================
 // 카메라 설정 상수
@@ -44,6 +45,10 @@ function Scene() {
   const boxRef = useRef<Mesh>(null);
   const boxPositionRef = useRef(new Vector3());
   const htmlContentRef = useRef<HTMLDivElement>(null);
+
+  // 현재 활성화된 세이브 포인트 (R 키로 리셋 시 사용)
+  const [currentSavePoint, setCurrentSavePoint] =
+    useState<SavePointData | null>(null);
 
   // Material 인스턴스 메모이제이션 (매 렌더링마다 재생성 방지)
   const greenMaterial = useMemo(
@@ -121,13 +126,34 @@ function Scene() {
     if (keyQueue.current["KeyR"]) {
       const rigidBody = carRef.current?.rigidBodyRef.current;
       if (rigidBody) {
-        // 초기 위치 (Car에 넘긴 position과 동일하게 맞춰야 함)
-        const resetPosition = { x: 0, y: 0, z: 0 };
+        // 세이브 포인트가 있으면 그 위치/방향으로, 없으면 기본값으로 리셋
+        const resetPositionArray = currentSavePoint?.position ?? [0, 0, 0];
+        const resetRotationY = currentSavePoint?.rotationY ?? 0;
 
-        rigidBody.setTranslation(resetPosition, true);
+        rigidBody.setTranslation(
+          {
+            x: resetPositionArray[0],
+            y: resetPositionArray[1],
+            z: resetPositionArray[2],
+          },
+          true
+        );
         rigidBody.setLinvel({ x: 0, y: 0, z: 0 }, true);
         rigidBody.setAngvel({ x: 0, y: 0, z: 0 }, true);
-        rigidBody.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
+
+        // Y축 회전만 사용하는 쿼터니언 생성
+        const resetQuat = new Quaternion().setFromEuler(
+          new Euler(0, resetRotationY, 0)
+        );
+        rigidBody.setRotation(
+          {
+            x: resetQuat.x,
+            y: resetQuat.y,
+            z: resetQuat.z,
+            w: resetQuat.w,
+          },
+          true
+        );
       }
     }
 
@@ -192,6 +218,15 @@ function Scene() {
       <directionalLight position={[10, 10, 5]} intensity={1} />
       <primitive object={pivot} /> {/* camera */}
       <Car ref={carRef} position={[0, 0, 0]} keyQueue={keyQueue} />
+      {/* Save Point 예시: 이 지점을 마지막 통과 세이브로 사용 */}
+      <SavePoint
+        position={[0, 0, 5]}
+        size={[2, 2, 2]}
+        color="#00ff00"
+        resetPosition={[0, 0, 0]}
+        resetRotationY={0}
+        onSave={(data) => setCurrentSavePoint(data)}
+      />
       {/* moving box */}
       <RigidBody position={[0, 0.5, 25]}>
         <Box ref={boxRef}>

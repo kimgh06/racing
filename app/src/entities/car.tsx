@@ -20,7 +20,7 @@ import {
   ExtrudeGeometry,
   Mesh,
 } from "three";
-import { Html } from "@react-three/drei";
+import { useCarStore } from "~/src/shared/store/carStore";
 
 type CarProps = {
   position?: [number, number, number];
@@ -37,6 +37,7 @@ export type CarHandle = {
  * Car 컴포넌트 - 차량 본체
  * @param position - 차량의 초기 위치
  */
+
 const Car = forwardRef<CarHandle, CarProps>(function Car(
   { position = [0, 0, 0], keyQueue, maxHeight },
   ref
@@ -125,20 +126,22 @@ const Car = forwardRef<CarHandle, CarProps>(function Car(
   const driftStartTime = useRef<number | null>(null); // 드리프트 시작 시간
   const prevSpeed = useRef(0); // 이전 프레임의 속도 (가속도 계산용)
   const driftGaugeValue = useRef(0); // 드리프트 게이지 누적 값
-  const [score, setScore] = useState(0);
 
-  // 상태 패널용 상태 관리
-  const [displaySpeed, setDisplaySpeed] = useState(0);
-  const [displayCollision, setDisplayCollision] = useState(false);
-  const [displayDriftMode, setDisplayDriftMode] = useState(false);
-  const [driftGauge, setDriftGauge] = useState(0); // 드리프트 게이지 (0-100)
+  // Zustand store
+  const {
+    setPosition,
+    setSpeed,
+    setCollision,
+    setDriftMode,
+    setScore,
+    setDriftGauge,
+    setDetectedDistance,
+    setDetectedObject,
+    incrementScore,
+  } = useCarStore();
 
   // 잡기 감지 관련 상태
   const detectedObject = useRef<RapierRigidBody | null>(null); // 감지된 오브젝트
-  const [displayDetectedObject, setDisplayDetectedObject] = useState(false); // 감지 상태 표시용
-  const [displayDetectedDistance, setDisplayDetectedDistance] = useState<
-    number | null
-  >(null); // 감지된 오브젝트와의 거리 (m)
 
   // 잡기 감지 설정
   const GRAB_DETECTION = {
@@ -686,8 +689,12 @@ const Car = forwardRef<CarHandle, CarProps>(function Car(
 
     const vel = cartbodyRef.current.linvel();
     const speed = Math.sqrt(vel.x ** 2 + vel.z ** 2);
-    setDisplaySpeed(Math.round(speed * 10) / 10);
-    setDisplayCollision(objectHit.current);
+    const currentPos = cartbodyRef.current.translation();
+
+    // Zustand store 업데이트
+    setSpeed(Math.round(speed * 10) / 10);
+    setCollision(objectHit.current);
+    setPosition({ x: currentPos.x, y: currentPos.y, z: currentPos.z });
 
     // 드리프트 모드 확인
     const isDriftActive =
@@ -697,7 +704,7 @@ const Car = forwardRef<CarHandle, CarProps>(function Car(
       isKeyPressed(keyQueue.current, KEY_ALIAS.DRIFT)
         ? true
         : false;
-    setDisplayDriftMode(isDriftActive);
+    setDriftMode(isDriftActive);
 
     // 좌우 회전 중인지 확인
     const isSteeringActive =
@@ -724,7 +731,7 @@ const Car = forwardRef<CarHandle, CarProps>(function Car(
         Math.max(0, driftGaugeValue.current)
       );
       if (driftGaugeValue.current >= 100) {
-        setScore((s) => s + 1);
+        incrementScore();
         driftGaugeValue.current = 0;
       }
       // 즉시 UI 업데이트 (매 프레임마다)
@@ -746,7 +753,7 @@ const Car = forwardRef<CarHandle, CarProps>(function Car(
   ) => {
     if (!cartbodyRef.current) {
       detectedObject.current = null;
-      setDisplayDetectedObject(false);
+      setDetectedObject(false);
       return;
     }
 
@@ -809,7 +816,7 @@ const Car = forwardRef<CarHandle, CarProps>(function Car(
       const distance = toObject.length();
 
       // 감지된 오브젝트와의 거리 업데이트 (미터 단위)
-      setDisplayDetectedDistance(distance);
+      setDetectedDistance(distance);
 
       // 거리 체크
       if (distance > GRAB_DETECTION.MAX_DISTANCE) return;
@@ -889,7 +896,7 @@ const Car = forwardRef<CarHandle, CarProps>(function Car(
 
     // 감지된 오브젝트 업데이트
     detectedObject.current = closestObject;
-    setDisplayDetectedObject(closestObject !== null);
+    setDetectedObject(closestObject !== null);
   };
 
   // 초기 몇 프레임 동안 카트바디 위치 강제 고정 (들썩거림 방지)
@@ -1046,125 +1053,6 @@ const Car = forwardRef<CarHandle, CarProps>(function Car(
           <boxGeometry args={[1, 0.5, 2]} />
           <meshStandardMaterial color="red" />
         </mesh>
-
-        {/* 차량 상태 패널 (차량 뒤쪽) */}
-        <Html
-          position={[0, 0, 1.5]} // 차량 뒤쪽, 차량과 같은 높이
-          center
-          distanceFactor={5}
-          style={{
-            transition: "all 0.2s",
-            pointerEvents: "none",
-            userSelect: "none",
-          }}
-        >
-          <div
-            style={{
-              background: "rgba(0, 0, 0, 0.8)",
-              color: "white",
-              padding: "12px 20px",
-              borderRadius: "8px",
-              fontFamily: "monospace",
-              fontSize: "14px",
-              border: "2px solid rgba(255, 255, 255, 0.3)",
-              boxShadow: "0 4px 6px rgba(0, 0, 0, 0.5)",
-              minWidth: "150px",
-            }}
-          >
-            <div
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                gap: "8px",
-              }}
-            >
-              <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <span style={{ color: "#888" }}>Position:</span>
-                <span
-                  style={{
-                    fontWeight: "bold",
-                  }}
-                >
-                  {cartbodyRef.current?.translation().x.toFixed(1)},
-                  {cartbodyRef.current?.translation().y.toFixed(1)},
-                  {cartbodyRef.current?.translation().z.toFixed(1)}
-                </span>
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <span style={{ color: "#888" }}>Speed:</span>
-                <span
-                  style={{
-                    fontWeight: "bold",
-                    color: displaySpeed > 5 ? "#ff6b6b" : "#4ecdc4",
-                  }}
-                >
-                  {displaySpeed.toFixed(1)} m/s
-                </span>
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <span style={{ color: "#888" }}>Collusion:</span>
-                <span
-                  style={{
-                    fontWeight: "bold",
-                    color: displayCollision ? "#ffd93d" : "#95e1d3",
-                  }}
-                >
-                  {displayCollision ? "Touching" : "Air"}
-                </span>
-              </div>
-              {/* 드리프트 모드 표시 */}
-              <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <span style={{ color: "#888" }}>Drift:</span>
-                <span
-                  style={{
-                    fontWeight: "bold",
-                    color: displayDriftMode ? "#ffd93d" : "#95e1d3",
-                  }}
-                >
-                  {score}, {displayDriftMode ? "Drift" : "Normal"}
-                </span>
-              </div>
-              {/* 감지된 오브젝트 표시 */}
-              <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <span style={{ color: "#888" }}>Detect:</span>
-                <span
-                  style={{
-                    fontWeight: "bold",
-                    color: displayDetectedObject ? "#00ff00" : "#888",
-                  }}
-                >
-                  {displayDetectedDistance?.toFixed(2)} m
-                </span>
-              </div>
-              {/* 드리프트 게이지 */}
-            </div>
-            <div
-              style={{
-                width: "100%",
-                height: "8px",
-                background: "rgba(255, 255, 255, 0.1)",
-                borderRadius: "4px",
-                overflow: "hidden",
-                border: "1px solid rgba(255, 255, 255, 0.2)",
-              }}
-            >
-              <div
-                style={{
-                  width: `${driftGauge}%`,
-                  height: "100%",
-                  background:
-                    driftGauge > 70
-                      ? "linear-gradient(90deg, #ff6b6b, #ffd93d)"
-                      : driftGauge > 40
-                      ? "linear-gradient(90deg, #ffd93d, #ffed4e)"
-                      : "linear-gradient(90deg, #95e1d3, #4ecdc4)",
-                  transition: "width 0.1s ease-out, background 0.1s ease-out",
-                  borderRadius: "4px",
-                }}
-              />
-            </div>
-          </div>
-        </Html>
       </RigidBody>
 
       {/* 부채꼴 감지 범위 시각화 (물리 엔진 영향 없음, RigidBody 밖에 위치) */}
