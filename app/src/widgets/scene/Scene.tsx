@@ -1,12 +1,11 @@
 import { useFrame, useThree } from "@react-three/fiber";
 import { CuboidCollider, RigidBody } from "@react-three/rapier";
 import Car, { CarHandle } from "~/src/entities/car";
-import { useEffect, useRef, useMemo, useState } from "react";
+import { useEffect, useRef, useMemo } from "react";
 import {
   Vector3,
   Quaternion,
   Euler,
-  GridHelper,
   Object3D,
   Mesh,
   DoubleSide,
@@ -14,7 +13,10 @@ import {
 } from "three";
 import { Box, Html, Plane } from "@react-three/drei";
 import PlaneWall from "~/src/entities/wall";
-import SavePoint, { SavePointData } from "~/src/entities/savepoint";
+import SavePoint from "~/src/entities/savepoint";
+import { useCarStore } from "~/src/shared/store/carStore";
+import MapFloor from "~/src/entities/floor";
+import Map from "~/src/entities/map";
 
 // ===============================
 // 카메라 설정 상수
@@ -38,6 +40,19 @@ const CAMERA_CONFIG = {
   },
 } as const;
 
+// x, y, z, rotationY, width
+const SAVE_POINT_POSITIONS = [
+  [0, 0, -3, 0],
+  [0, 0, -30, 0],
+  [10, 0, -95, Math.PI / 2, 10],
+  [55, 0, -85, Math.PI, 10],
+  [55, 0, 90, Math.PI, 10],
+  [40, 0, 125, (Math.PI * 3) / 2, 10],
+  [-40, 0, 125, (Math.PI * 3) / 2, 10],
+  [-55, 0, 110, 0, 10],
+  [-48, 0, 3.5, Math.PI / 2],
+];
+
 function Scene() {
   const { camera } = useThree();
   const keyQueue = useRef<Record<string, boolean>>({});
@@ -45,16 +60,6 @@ function Scene() {
   const boxRef = useRef<Mesh>(null);
   const boxPositionRef = useRef(new Vector3());
   const htmlContentRef = useRef<HTMLDivElement>(null);
-
-  // 현재 활성화된 세이브 포인트 (R 키로 리셋 시 사용)
-  const [currentSavePoint, setCurrentSavePoint] =
-    useState<SavePointData | null>(null);
-
-  // Material 인스턴스 메모이제이션 (매 렌더링마다 재생성 방지)
-  const greenMaterial = useMemo(
-    () => new MeshStandardMaterial({ side: DoubleSide, color: "green" }),
-    []
-  );
 
   // useFrame에서 재사용할 객체들 (가비지 컬렉션 방지)
   const tempVector = useRef(new Vector3());
@@ -83,9 +88,6 @@ function Scene() {
     if (e.buttons === 0) return;
     yawRotation.current -=
       e.movementX * CAMERA_CONFIG.ROTATION.MOUSE_SENSITIVITY;
-
-    // 카메라 기울기는 고정 (마우스로 변경 불가)
-    // pitchRotation.current는 고정값 유지
   };
 
   const onDocumentMouseWheel = (e: WheelEvent) => {
@@ -106,6 +108,7 @@ function Scene() {
       document.removeEventListener("wheel", onDocumentMouseWheel);
     };
   }, []);
+
   const handleKeyDown = (event: KeyboardEvent) =>
     (keyQueue.current[event.code] = true);
 
@@ -126,9 +129,12 @@ function Scene() {
     if (keyQueue.current["KeyR"]) {
       const rigidBody = carRef.current?.rigidBodyRef.current;
       if (rigidBody) {
+        const savePointId = useCarStore.getState().savePointId;
         // 세이브 포인트가 있으면 그 위치/방향으로, 없으면 기본값으로 리셋
-        const resetPositionArray = currentSavePoint?.position ?? [0, 0, 0];
-        const resetRotationY = currentSavePoint?.rotationY ?? 0;
+        const resetPositionArray = SAVE_POINT_POSITIONS[savePointId] ?? [
+          0, 0, 0,
+        ];
+        const resetRotationY = SAVE_POINT_POSITIONS[savePointId][3] ?? 0;
 
         rigidBody.setTranslation(
           {
@@ -143,7 +149,7 @@ function Scene() {
 
         // Y축 회전만 사용하는 쿼터니언 생성
         const resetQuat = new Quaternion().setFromEuler(
-          new Euler(0, resetRotationY, 0)
+          new Euler(0, -resetRotationY, 0)
         );
         rigidBody.setRotation(
           {
@@ -218,15 +224,17 @@ function Scene() {
       <directionalLight position={[10, 10, 5]} intensity={1} />
       <primitive object={pivot} /> {/* camera */}
       <Car ref={carRef} position={[0, 0, 0]} keyQueue={keyQueue} />
-      {/* Save Point 예시: 이 지점을 마지막 통과 세이브로 사용 */}
-      <SavePoint
-        position={[0, 0, 5]}
-        size={[2, 2, 2]}
-        color="#00ff00"
-        resetPosition={[0, 0, 0]}
-        resetRotationY={0}
-        onSave={(data) => setCurrentSavePoint(data)}
-      />
+      {SAVE_POINT_POSITIONS.map((position, index) => (
+        <SavePoint
+          key={index}
+          id={index}
+          maxId={SAVE_POINT_POSITIONS.length - 1}
+          position={[position[0], position[1], position[2]]}
+          rotationY={position[3]}
+          size={position[4] ? [position[4], 2] : undefined}
+          color="#00ff00"
+        />
+      ))}
       {/* moving box */}
       <RigidBody position={[0, 0.5, 25]}>
         <Box ref={boxRef}>
@@ -235,69 +243,8 @@ function Scene() {
           </Html>
         </Box>
       </RigidBody>
-      {/* 일반 경사면 */}
-      <RigidBody type={"fixed"}>
-        <Plane
-          rotation={[(-Math.PI * 7) / 16, 0, 0]}
-          position={[0, 1.9, -55]}
-          args={[4, 25]}
-          material={greenMaterial}
-        />
-      </RigidBody>
-      {/* Guide Lane */}
-      <RigidBody type={"fixed"}>
-        <PlaneWall position={[-2, 0, -26]} args={[55, 1]} />
-        <PlaneWall position={[2, 0, -26]} args={[55, 1]} />
-        <PlaneWall position={[5, 0, -85]} args={[10, 1]} />
-        <PlaneWall position={[-5, 0, -85]} args={[10, 1]} />
-        <PlaneWall position={[0, 0, -80]} args={[10, 1]} rotateY={0} />
-        <PlaneWall
-          position={[0, 0, -95]}
-          args={[10 * Math.sqrt(2), 1]}
-          rotateY={Math.PI / 4}
-        />
-        <PlaneWall position={[10, 0, -90]} args={[10, 1]} rotateY={0} />
-        <PlaneWall position={[10, 0, -100]} args={[10, 1]} rotateY={0} />
-        <PlaneWall position={[30, 0, -90]} args={[40, 1]} rotateY={0} />
-        <PlaneWall position={[30, 0, -100]} args={[40, 1]} rotateY={0} />
-        <PlaneWall
-          position={[55, 0, -95]}
-          args={[10 * Math.sqrt(2), 1]}
-          rotateY={-Math.PI / 4}
-        />
-        <PlaneWall position={[60, 0, -85]} args={[10, 1]} />
-        <PlaneWall position={[50, 0, -85]} args={[10, 1]} />
-        <PlaneWall position={[50, 0, 20]} args={[200, 1]} />
-        <PlaneWall position={[60, 0, 20]} args={[200, 1]} />
-        <PlaneWall
-          position={[55, 0, 125]}
-          args={[10 * Math.sqrt(2), 1]}
-          rotateY={Math.PI / 4}
-        />
-        <PlaneWall position={[0, 0, 120]} args={[100, 1]} rotateY={0} />
-        <PlaneWall position={[0, 0, 130]} args={[100, 1]} rotateY={0} />
-        <PlaneWall
-          position={[-55, 0, 125]}
-          args={[10 * Math.sqrt(2), 1]}
-          rotateY={-Math.PI / 4}
-        />
-        <PlaneWall position={[-60, 0, 61.25]} args={[120.5, 1]} />
-        <PlaneWall position={[-50, 0, 62.75]} args={[114.5, 1]} />
-        <PlaneWall position={[-26, 0, 1.5]} args={[48, 1]} rotateY={0} />
-        <PlaneWall position={[-26, 0, 5.5]} args={[48, 1]} rotateY={0} />
-        <PlaneWall position={[-55, 0, 1.5]} args={[10, 1]} rotateY={0} />
-        <PlaneWall
-          position={[0, 0, 3.5]}
-          args={[4 * Math.sqrt(2), 1]}
-          rotateY={Math.PI / 4}
-        />
-      </RigidBody>
-      {/* 바닥 */}
-      <gridHelper position={[0, -0.5, 0]} args={[2000, 2000]} />
-      <CuboidCollider
-        position={[0, -1, 0]}
-        args={[1000, 0.5, 1000]}
-      ></CuboidCollider>
+      <Map />
+      <MapFloor />
     </>
   );
 }

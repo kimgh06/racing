@@ -3,6 +3,7 @@ import { create } from "zustand";
 type CarState = {
   // 차량 위치
   position: { x: number; y: number; z: number } | null;
+  savePointId: number;
   // 속도
   speed: number;
   // 충돌 상태
@@ -21,6 +22,7 @@ type CarState = {
 
 type CarActions = {
   setPosition: (position: { x: number; y: number; z: number } | null) => void;
+  setSavePointId: (savePointId: number) => void;
   setSpeed: (speed: number) => void;
   setCollision: (collision: boolean) => void;
   setDriftMode: (driftMode: boolean) => void;
@@ -35,6 +37,7 @@ type CarActions = {
 export const useCarStore = create<CarState & CarActions>((set) => ({
   // 초기 상태
   position: null,
+  savePointId: 0,
   speed: 0,
   collision: false,
   driftMode: false,
@@ -45,14 +48,14 @@ export const useCarStore = create<CarState & CarActions>((set) => ({
 
   // Actions
   setPosition: (position) => set({ position }),
+  setSavePointId: (savePointId) => set({ savePointId }),
   setSpeed: (speed) => set({ speed }),
   setCollision: (collision) => set({ collision }),
   setDriftMode: (driftMode) => set({ driftMode }),
   setScore: (score) => set({ score }),
-  setDriftGauge: (gauge) => set({ driftGauge: gauge }),
-  setDetectedDistance: (distance) => set({ detectedDistance: distance }),
-  setDetectedObject: (detected) => set({ detectedObject: detected }),
+  setDriftGauge: (driftGauge) => set({ driftGauge }),
+  setDetectedDistance: (detectedDistance) => set({ detectedDistance }),
+  setDetectedObject: (detectedObject) => set({ detectedObject }),
   incrementScore: () => set((state) => ({ score: state.score + 1 })),
   resetScore: () => set({ score: 0 }),
 }));
-

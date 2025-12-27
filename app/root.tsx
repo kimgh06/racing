@@ -9,7 +9,7 @@ import {
 } from "@remix-run/react";
 
 export const meta: MetaFunction = () => [
-  { title: "Racing Gravity Engine" },
+  { title: "Falcare Alpha Test" },
   { name: "description", content: "Remix + R3F 중력 엔진 데모" },
 ];
 
