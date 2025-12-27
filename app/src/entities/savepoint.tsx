@@ -55,7 +55,6 @@ export default function SavePoint({
         // check that it is player's car.
         if (!otherBody || !otherBody.isDynamic()) return;
         if (id - 1 !== savePointId && savePointId !== maxId) return;
-        console.log(id);
         setSavePointId(id);
       }}
     >
