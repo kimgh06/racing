@@ -18,6 +18,7 @@ type CarState = {
   detectedDistance: number | null;
   // 감지된 오브젝트 여부
   detectedObject: boolean;
+  lapTime: number;
 };
 
 type CarActions = {
@@ -32,6 +33,7 @@ type CarActions = {
   setDetectedObject: (detected: boolean) => void;
   incrementScore: () => void;
   resetScore: () => void;
+  setLapTime: (lapTime: number) => void;
 };
 
 export const useCarStore = create<CarState & CarActions>((set) => ({
@@ -45,6 +47,7 @@ export const useCarStore = create<CarState & CarActions>((set) => ({
   driftGauge: 0,
   detectedDistance: null,
   detectedObject: false,
+  lapTime: performance.now(),
 
   // Actions
   setPosition: (position) => set({ position }),
@@ -58,4 +61,5 @@ export const useCarStore = create<CarState & CarActions>((set) => ({
   setDetectedObject: (detectedObject) => set({ detectedObject }),
   incrementScore: () => set((state) => ({ score: state.score + 1 })),
   resetScore: () => set({ score: 0 }),
+  setLapTime: (lapTime) => set({ lapTime }),
 }));

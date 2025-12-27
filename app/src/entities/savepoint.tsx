@@ -31,7 +31,7 @@ export default function SavePoint({
   color = "#00ff00", // 녹색
   rotationY = 0, // 기본 방향: 월드 Z-축 기준
 }: SavePointProps) {
-  const { savePointId, setSavePointId } = useCarStore();
+  const { savePointId, setSavePointId, setLapTime, lapTime } = useCarStore();
 
   // Material 메모이제이션 (녹색 발판)
   const material = useMemo(
@@ -55,6 +55,7 @@ export default function SavePoint({
         // check that it is player's car.
         if (!otherBody || !otherBody.isDynamic()) return;
         if (id - 1 !== savePointId && savePointId !== maxId) return;
+        if (id === maxId) setLapTime(performance.now());
         setSavePointId(id);
       }}
     >
@@ -64,7 +65,9 @@ export default function SavePoint({
         rotation={[Math.PI / 2, 0, 0]}
         material={material}
       />
-      <Html style={{ fontSize: "30px" }}>{id}</Html>
+      <Html style={{ fontSize: "30px" }}>
+        {id === 0 ? "Start" : id === maxId ? "Finish" : id}
+      </Html>
     </RigidBody>
   );
 }

@@ -1,3 +1,4 @@
+import { useState, useEffect } from "react";
 import { useCarStore } from "~/src/shared/store/carStore";
 
 /**
@@ -14,7 +15,16 @@ export default function CarPanel() {
     driftGauge,
     detectedDistance,
     detectedObject,
+    lapTime,
+    savePointId,
   } = useCarStore();
+
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    // 클라이언트에서만 실행
+    setMounted(true);
+  }, []);
 
   return (
     <div
@@ -37,6 +47,18 @@ export default function CarPanel() {
         userSelect: "none",
       }}
     >
+      {/* for the lap time */}
+      {mounted && (
+        <div style={{ display: "flex", justifyContent: "space-between" }}>
+          last: {savePointId}
+          <span style={{ fontWeight: "bold", color: "#4ecdc4" }}>
+            time:{Math.floor(performance.now() / 1000)}s
+          </span>
+          <span style={{ fontWeight: "bold", color: "#4ecdc4" }}>
+            lap:{lapTime > 600000 ? "--" : `${Math.floor(lapTime / 1000)}s`}
+          </span>
+        </div>
+      )}
       <div
         style={{
           display: "flex",
@@ -101,12 +123,11 @@ export default function CarPanel() {
               color: detectedObject ? "#00ff00" : "#888",
             }}
           >
-            {detectedDistance !== null ? detectedDistance.toFixed(2) : "0.00"}{" "}
-            m
+            {detectedDistance !== null ? detectedDistance.toFixed(2) : "0.00"} m
           </span>
         </div>
-        {/* 드리프트 게이지 */}
       </div>
+      {/* 드리프트 게이지 */}
       <div
         style={{
           width: "100%",
@@ -136,4 +157,3 @@ export default function CarPanel() {
     </div>
   );
 }
-

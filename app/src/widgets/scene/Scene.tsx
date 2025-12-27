@@ -51,6 +51,7 @@ const SAVE_POINT_POSITIONS = [
   [-40, 0, 125, (Math.PI * 3) / 2, 10],
   [-55, 0, 110, 0, 10],
   [-48, 0, 3.5, Math.PI / 2],
+  [0, 0, 0, 0],
 ];
 
 function Scene() {
@@ -223,7 +224,13 @@ function Scene() {
       <ambientLight intensity={0.5} />
       <directionalLight position={[10, 10, 5]} intensity={1} />
       <primitive object={pivot} /> {/* camera */}
-      <Car ref={carRef} position={[0, 0, 0]} keyQueue={keyQueue} />
+      <Car
+        ref={carRef}
+        position={
+          SAVE_POINT_POSITIONS[0].slice(0, 3) as [number, number, number]
+        }
+        keyQueue={keyQueue}
+      />
       {SAVE_POINT_POSITIONS.map((position, index) => (
         <SavePoint
           key={index}
@@ -231,7 +238,7 @@ function Scene() {
           maxId={SAVE_POINT_POSITIONS.length - 1}
           position={[position[0], position[1], position[2]]}
           rotationY={position[3]}
-          size={position[4] ? [position[4], 2] : undefined}
+          size={position[4] ? [position[4], 2] : [5, 2]}
           color="#00ff00"
         />
       ))}
