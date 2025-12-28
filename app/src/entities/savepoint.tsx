@@ -1,4 +1,4 @@
-import { RigidBody } from "@react-three/rapier";
+import { RigidBody, CuboidCollider } from "@react-three/rapier";
 import { useMemo } from "react";
 import { Html, Plane } from "@react-three/drei";
 import { MeshStandardMaterial, DoubleSide } from "three";
@@ -50,7 +50,8 @@ export default function SavePoint({
       type="fixed"
       position={position}
       rotation={[0, -rotationY, 0]}
-      onCollisionEnter={(event) => {
+      sensor={true}
+      onIntersectionEnter={(event) => {
         const otherBody = event.other.rigidBody;
         // check that it is player's car.
         if (!otherBody || !otherBody.isDynamic()) return;
@@ -59,12 +60,7 @@ export default function SavePoint({
         setSavePointId(id);
       }}
     >
-      <Plane
-        args={size}
-        position={[0, -0.5, 0]}
-        rotation={[Math.PI / 2, 0, 0]}
-        material={material}
-      />
+      <Plane args={size} material={material} />
       <Html style={{ fontSize: "30px" }}>
         {id === 0 ? "Start" : id === maxId ? "Finish" : id}
       </Html>

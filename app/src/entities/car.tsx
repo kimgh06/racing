@@ -978,6 +978,11 @@ const Car = forwardRef<CarHandle, CarProps>(function Car(
         linearDamping={0.3}
         angularDamping={0.8}
         onCollisionEnter={(event) => {
+          const otherBody = event.other.rigidBody;
+          const otherCollider = event.other.collider;
+          // sensor인 경우 (저장점 등) 접촉 상태 계산에서 제외
+          if (!otherBody || !otherCollider || otherCollider.isSensor()) return;
+
           // 어떤 물체와든 접촉이 시작되면 contactCount 증가
           contactCount.current += 1;
           objectHit.current = true; // 어디든 닿고 있으면 true
@@ -1021,6 +1026,11 @@ const Car = forwardRef<CarHandle, CarProps>(function Car(
           }
         }}
         onCollisionExit={(event) => {
+          const otherBody = event.other.rigidBody;
+          const otherCollider = event.other.collider;
+          // sensor인 경우 (저장점 등) 접촉 상태 계산에서 제외
+          if (!otherBody || !otherCollider || otherCollider.isSensor()) return;
+
           // 접촉이 끝날 때마다 contactCount 감소
           contactCount.current = Math.max(0, contactCount.current - 1);
 
