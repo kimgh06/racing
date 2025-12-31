@@ -31,18 +31,19 @@ export default function SavePoint({
   color = "#00ff00", // 녹색
   rotationY = 0, // 기본 방향: 월드 Z-축 기준
 }: SavePointProps) {
-  const { savePointId, setSavePointId, setLapTime, lapTime } = useCarStore();
+  const { savePointId, setSavePointId, setLapTime } = useCarStore();
+  const isNextSavePoint = id - 1 !== savePointId && savePointId !== maxId;
 
   // Material 메모이제이션 (녹색 발판)
   const material = useMemo(
     () =>
       new MeshStandardMaterial({
-        color,
+        color: isNextSavePoint ? color : "#ff0000",
         transparent: true,
         opacity: 0.5, // 발판이므로 조금 더 진하게
         side: DoubleSide,
       }),
-    []
+    [isNextSavePoint]
   );
 
   return (
